@@ -14,18 +14,26 @@ class EmailHandler():
         # if you want SPAM, use "INBOX.SPAM"
         mailbox = "INBOX"
         self.mail.select(mailbox)
-        
-    def get_new_mail(self, unseen=True):
+    
+    def get_all_mail_uids(self):
+        result, data = self.mail.uid('search', None, "ALL")
+        return data[0].split()
+    
+    def get_new_mail(self, *, unseen=True, uids=None):
         emails = []
         
-        if unseen:
-            result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
+        if uids is not None:
+            result = 'OK'
         else:
-            result, data = self.mail.uid('search', None, "ALL")
-        
+            if unseen:
+                result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
+            else:
+                result, data = self.mail.uid('search', None, "ALL")
+            
+            uids = data[0].split()
         
         if result == 'OK':
-            for num in data[0].split():
+            for num in uids:
                 result, email_data = self.mail.uid('fetch', num, '(BODY.PEEK[])') # fetch the email body (peek = not mark as read)
                 raw_email = email_data[0][1]
                 raw_email_string = raw_email.decode('utf-8')
@@ -39,6 +47,7 @@ class EmailHandler():
                 email_from = str(decode_header(email_message['From'])[0][0])
                 email_to = str(decode_header(email_message['To'])[0][0])
                 subject = str(decode_header(email_message['Subject'])[0][0])
+                id = num.decode('utf-8')
                 
                 body = ""
                 if email_message.is_multipart():
@@ -51,7 +60,7 @@ class EmailHandler():
                     body = email_message.get_payload(decode=True).decode("latin-1")
 
                 # return the email details
-                emails.append({'from': email_from, 'to': email_to, 'subject': subject, 'date': local_message_date, 'body': body})
+                emails.append({'id': id, 'from': email_from, 'to': email_to, 'subject': subject, 'date': local_message_date, 'body': body})
         else:
             print("No new emails to read.")
         
