@@ -1,16 +1,22 @@
 import chromadb
-import numpy as np
+from chromadb.utils import embedding_functions
 
+import numpy as np
 
 class VectorDatabase():
     def __init__(self, db_path="./chroma_db/"):
         self.chroma_client = chromadb.PersistentClient(db_path)
-        self.emails_collection = self.chroma_client.create_collection(name="emails")
-    
-    def get_all_vectors(self, collection=None):
-        docs = collection.get(include=['embeddings'])
-        ids = [doc.id for doc in docs]
-        vectors = np.array([v.embeddings for v in docs])
         
-        return {'ids': , 'vectors': vectors}
+        self.default_ef = embedding_functions.DefaultEmbeddingFunction()
+        self.emails_collection = self.chroma_client.get_or_create_collection(name="emails", embedding_function=self.default_ef)
+    
+    def embed(self, text):
+        return self.default_ef(text)
+    
+    def get_all_embeddings(self, collection=None):
+        docs = collection.get(include=['embeddings'])
+        ids = docs['ids']
+        embeddings = np.array(docs['embeddings'])
+        
+        return {'ids': ids, 'embeddings': embeddings}
 
