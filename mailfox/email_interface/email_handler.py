@@ -17,20 +17,23 @@ class EmailHandler():
     
     def get_all_mail_uids(self):
         result, data = self.mail.uid('search', None, "ALL")
-        return data[0].split()
+        return [d.decode('utf-8') for d in data[0].split()]
     
-    def get_new_mail(self, *, unseen=True, uids=None):
+    def get_mail(self, *, filter='unseen', uids=None, return_dataframe=True):
         emails = []
         
-        if uids is not None:
-            result = 'OK'
-        else:
-            if unseen:
-                result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
-            else:
-                result, data = self.mail.uid('search', None, "ALL")
-            
+        if filter == 'unseen':
+            result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
             uids = data[0].split()
+        elif filter == 'all':
+            result, data = self.mail.uid('search', None, "ALL")
+            uids = data[0].split()
+        elif filter == 'uids' and uids is not None:
+            result = 'OK'
+            uids = [uid.encode('utf-8') for uid in uids]
+        else:
+            print("Invalid filter. Please use 'unseen', 'all', or 'uids'.")
+            return
         
         if result == 'OK':
             for num in uids:
@@ -63,6 +66,9 @@ class EmailHandler():
                 emails.append({'id': id, 'from': email_from, 'to': email_to, 'subject': subject, 'date': local_message_date, 'body': body})
         else:
             print("No new emails to read.")
+        
+        if return_dataframe:
+            return pd.DataFrame(emails)
         
         return emails
     
