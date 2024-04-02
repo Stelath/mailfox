@@ -1,1 +1,1 @@
-from email_handler import EmailHandler
+from .email_handler import EmailHandler

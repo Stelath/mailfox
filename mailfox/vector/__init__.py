@@ -1,2 +1,2 @@
-from clustering import *
-from database import *
+from .clustering import *
+from .database import *
