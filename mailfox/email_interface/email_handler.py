@@ -1,6 +1,7 @@
 import os
 import imaplib
 import datetime
+import multiprocessing
 import email
 from email.header import decode_header
 from tqdm.auto import tqdm
@@ -19,27 +20,70 @@ class EmailHandler():
         result, data = self.mail.uid('search', None, "ALL")
         return [d.decode('utf-8') for d in data[0].split()]
     
-    def get_mail(self, *, filter='unseen', uids=None, return_dataframe=True):
+    def get_all_folders(self):
+        result, data = self.mail.list()
+        return [d.decode('utf-8').split(' "/" ')[1][1:-1] for d in data]
+    
+    def get_folder_uids(self, folder):
+        result, data = self.mail.select(folder)
+        if result == 'OK':
+            result, data = self.mail.uid('search', None, "ALL")
+            return [d.decode('utf-8') for d in data[0].split()]
+        else:
+            print(f"Failed to select folder {folder}")
+            return []
+    
+    def get_mail(self, filter='unseen', *, uids=None, folders=["INBOX"], return_dataframe=True):
         emails = []
         
-        if filter == 'unseen':
-            result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
-            uids = data[0].split()
-        elif filter == 'all':
-            result, data = self.mail.uid('search', None, "ALL")
-            uids = data[0].split()
-        elif filter == 'uids' and uids is not None:
-            result = 'OK'
-            uids = [uid.encode('utf-8') for uid in uids]
-        else:
-            print("Invalid filter. Please use 'unseen', 'all', or 'uids'.")
-            return
+        if folders != [] and folders is not None:
+            uids = []
+            for folder in folders:
+                result, data = self.mail.select(folder)
+                if result == 'OK':
+                    if filter == 'unseen':
+                        result, data = self.mail.uid('search', None, "(UNSEEN)")
+                        uids += data[0].split()
+                    elif filter == 'seen':
+                        result, data = self.mail.uid('search', None, "(SEEN)")
+                        uids += data[0].split()
+                    elif filter == 'all':
+                        result, data = self.mail.uid('search', None, "ALL")
+                        uids += data[0].split()
+                    elif filter == 'uids' and uids is not None:
+                        result = 'OK'
+                        uids += [uid.encode('utf-8') for uid in uids]
+                    else :
+                        print("Invalid filter. Please use 'unseen', 'all', or 'uids'.")
+                        return
+                else:
+                    print(f"Failed to select folder {folder}")
+                    continue
+        else:    
+            if filter == 'unseen':
+                result, data = self.mail.uid('search', None, "(UNSEEN)") # search and return uids of unseen emails
+                uids = data[0].split()
+            elif filter == 'seen':
+                result, data = self.mail.uid('search', None, "(SEEN)")
+                uids = data[0].split()
+            elif filter == 'all':
+                result, data = self.mail.uid('search', None, "ALL")
+                uids = data[0].split()
+            elif filter == 'uids' and uids is not None:
+                result = 'OK'
+                uids = [uid.encode('utf-8') for uid in uids]
+            else:
+                print("Invalid filter. Please use 'unseen', 'all', or 'uids'.")
+                return
         
-        if result == 'OK':
-            for num in uids:
+        if uids != [] and uids is not None:
+            for num in tqdm(uids, desc="Processing Emails", leave=False):
                 result, email_data = self.mail.uid('fetch', num, '(BODY.PEEK[])') # fetch the email body (peek = not mark as read)
                 raw_email = email_data[0][1]
-                raw_email_string = raw_email.decode('utf-8')
+                try:
+                    raw_email_string = raw_email.decode('utf-8')
+                except:
+                    continue
                 email_message = email.message_from_string(raw_email_string)
 
                 # get the email details
@@ -47,10 +91,15 @@ class EmailHandler():
                 if date_tuple:
                     local_date = datetime.datetime.fromtimestamp(email.utils.mktime_tz(date_tuple))
                     local_message_date = "%s" %(str(local_date.strftime("%a, %d %b %Y %H:%M:%S")))
-                email_from = str(decode_header(email_message['From'])[0][0])
-                email_to = str(decode_header(email_message['To'])[0][0])
-                subject = str(decode_header(email_message['Subject'])[0][0])
-                id = num.decode('utf-8')
+                    
+                try:
+                    email_from = str(decode_header(email_message['From'])[0][0])
+                    email_to = str(decode_header(email_message['To'])[0][0])
+                    subject = str(decode_header(email_message['Subject'])[0][0])
+                    folder = str(decode_header(email_message['Folder'])[0][0])
+                    id = num.decode('utf-8')
+                except:
+                    continue
                 
                 body = ""
                 if email_message.is_multipart():
@@ -72,16 +121,25 @@ class EmailHandler():
         
         return emails
     
-    def add_email_to_group(self, email_id, label):
-        result = self.mail.uid('STORE', email_id, '+X-GM-LABELS', label)
+    def create_folder(self, folder):
+        result = self.mail.create(folder)
         if result[0] == 'OK':
-            print(f"Email {email_id} has been added to {label}")
+            print(f"Created folder {folder}")
         else:
-            print(f"Failed to add email {email_id} to {label}")
+            print(f"Failed to create folder {folder}")
     
-    def create_label(self, label):
-        result = self.mail.create(label)
-        if result[0] == 'OK':
-            print(f"Label {label} has been created.")
-        else:
-            print(f"Failed to create label {label}")
+    def move_mail(self, uids, folder):
+        for uid in uids:
+            result = self.mail.uid('COPY', uid, folder)
+            if result[0] == 'OK':
+                mov, data = self.mail.uid('STORE', uid , '+FLAGS', '(\Deleted)')
+                self.mail.expunge()
+                print(f"Moved {uid} to {folder}")
+            else:
+                print(f"Failed to move {uid} to {folder}")
+    
+    def delete_mail(self, uids):
+        for uid in uids:
+            mov, data = self.mail.uid('STORE', uid , '+FLAGS', '(\Deleted)')
+            self.mail.expunge()
+            print(f"Deleted {uid}")
