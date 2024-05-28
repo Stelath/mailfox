@@ -3,7 +3,7 @@ import numpy as np
 
 from sklearn.cluster import HDBSCAN
 from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
 
 class HDBCluster():
     def __init__(self, data, min_cluster_size=5, cluster_selection_epsilon=0.5, pca=True):
@@ -39,22 +39,26 @@ class HDBCluster():
 class FolderCluster():
     def __init__(self, folders):
         # Folders is a dictionary of folder names and their vectors
-        self.folders = folders.keys()
-        self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in self.folders.items()}
-        self.nbrs = NearestNeighbors(n_neighbors=3, weights='distance').fit(list(self.centroids.values()))
+        self.folders = list(folders.keys())
+        self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in folders.items()}
+        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
     
     def add_folder(self, folder, vectors):
         self.folders.append(folder)
         self.centroids[folder] = np.mean(vectors, axis=0)
-        self.nbrs = NearestNeighbors(n_neighbors=3, weights='distance').fit(list(self.centroids.values()))
+        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
     
-    def predict(self, vector):
-        distances, indices = self.nbrs.kneighbors(vector.reshape(1, -1))
-        return list(self.centroids.keys())[indices[0][0]]
+    def single_predict(self, vector):
+        pred = self.nbrs.predict(vector.reshape(1, -1))
+        return self.folders[pred]
     
+    def predict(self, vectors):
+        pred = self.nbrs.predict(vectors)
+        return [self.folders[p] for p in pred]
+            
     def save_model(self, path):
         pickle.dump((self.folders, self.centroids), open(path, 'wb'))
     
     def load_model(self, path):
         self.folders, self.centroids = pickle.load(open(path, 'rb'))
-        self.nbrs = NearestNeighbors(n_neighbors=3, weights='distance').fit(list(self.centroids.values()))
+        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()))
