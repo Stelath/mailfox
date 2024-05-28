@@ -10,11 +10,18 @@ class VectorDatabase():
         self.default_ef = embedding_functions.DefaultEmbeddingFunction()
         self.emails_collection = self.chroma_client.get_or_create_collection(name="emails", embedding_function=self.default_ef)
     
-    def embed(self, text):
+    def embed(self, text: list[str]):
         return self.default_ef(text)
     
+    def embed_email(self, email: dict):
+        embeddings = np.array(self.default_ef([email['from'], email['subject'], email['body']]))
+        embedding = embeddings[0] * 0.3 + embeddings[1] * 0.2 + embeddings[2] * 0.5
+        embedding = embedding.reshape(1, -1)
+        
+        return embedding
+    
     def get_all_embeddings(self, collection=None):
-        docs = collection.get(include=['embeddings'])
+        docs = self.emails_collection.get(include=['embeddings'])
         ids = docs['ids']
         embeddings = np.array(docs['embeddings'])
         
