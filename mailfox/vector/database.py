@@ -10,6 +10,10 @@ class VectorDatabase():
         self.default_ef = embedding_functions.DefaultEmbeddingFunction()
         self.emails_collection = self.chroma_client.get_or_create_collection(name="emails", embedding_function=self.default_ef)
     
+    def is_emails_empty(self):
+        docs = self.emails_collection.get(include=[])
+        return len(docs['ids']) == 0
+    
     def embed(self, text: list[str]):
         return self.default_ef(text)
     
