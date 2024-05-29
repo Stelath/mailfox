@@ -92,7 +92,7 @@ def download_emails(config, email_handler, vector_db):
             embeddings=embedding,
             metadatas=dict(mail.drop('uuid'))
         )
-    
+
 
 # SETUP WIZARD
 @app.command()
@@ -132,22 +132,50 @@ config_app = typer.Typer()
 app.add_typer(config_app, name="config")
 
 @config_app.command("set")
-def set_config(email_db_path: str = "~/.mailfox/data/email_db", clustering_path: str = "~/.mailfox/data/clustering.pkl", flagged_folders: Optional[str] = None, default_classifier: str = "clustering"):
+def set_config(email_db_path: Optional[str] = None, clustering_path: Optional[str] = None, flagged_folders: Optional[str] = None, default_classifier: Optional[str] = None):
+    """
+    Set configuration for the application.
+
+    Args:
+        email_db_path (Optional[str]): Path to the email database.
+        clustering_path (Optional[str]): Path to the clustering data.
+        flagged_folders (Optional[str]): Comma-separated list of flagged folders.
+        default_classifier (Optional[str]): Default classifier to use (either clustering or llm).
+    """
     try:
         config_file = os.path.expanduser("~/.mailfox/config.yaml")
         os.makedirs(os.path.dirname(config_file), exist_ok=True)
         
+        # Load existing config if the file exists
+        if os.path.exists(config_file):
+            with open(config_file, "r") as file:
+                existing_config = yaml.safe_load(file) or {}
+        else:
+            existing_config = {}
+
+        # Update config values only if they are provided
         yaml_dict = {
-            "email_db_path": email_db_path,
-            "clustering_path": clustering_path,
-            "flagged_folders": [folder.strip() for folder in flagged_folders.split(",")] if flagged_folders is not None else None,
-            "default_classifier": default_classifier
+            "email_db_path": email_db_path if email_db_path is not None else existing_config.get("email_db_path"),
+            "clustering_path": clustering_path if clustering_path is not None else existing_config.get("clustering_path"),
+            "flagged_folders": [folder.strip() for folder in flagged_folders.split(",")] if flagged_folders is not None else existing_config.get("flagged_folders"),
+            "default_classifier": default_classifier if default_classifier is not None else existing_config.get("default_classifier")
         }
         
-        yaml.dump(yaml_dict, open(config_file, "w"))
+        # Save updated config
+        with open(config_file, "w") as file:
+            yaml.dump(yaml_dict, file)
+        
         typer.echo("Configuration saved")
     except Exception as e:
         typer.secho(f"Error saving config: {e}", err=True, fg=typer.colors.RED)
+
+@config_app.command("list")
+def list_config():
+    try:
+        config = get_config()
+        typer.echo(yaml.dump(config))
+    except FileNotFoundError:
+        typer.secho("No config file found", err=True, fg=typer.colors.RED)
 
 def get_config():
     config_file = os.path.expanduser("~/.mailfox/config.yaml")
