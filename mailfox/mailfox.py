@@ -66,16 +66,27 @@ def run():
                     folder = clustering.predict_folder(mail)
                     email_handler.move_mail([mail['uid']], folder)
             elif config['default_classifier'] == "llm":
-                with ThreadPoolExecutor(max_workers=6) as executor:
-                    folders = email_handler.get_subfolders(config['flagged_folders'])
-                    llm_process_mail_partial = partial(llm_process_mail, emailLLM=emailLLM, all_folders=folders)
-                    folder_emails = {folder: [] for folder in folders}
-                    for mail, folder in tqdm(executor.map(llm_process_mail_partial, new_emails.iterrows()), desc="Classifying Emails", total=new_emails.shape[0]):
-                        if folder is not None:
-                            folder_emails[folder].append(mail[1]['uid'])
-                    for folder, emails in folder_emails.items():
-                        email_handler.move_mail(emails, folder)
-    
+                for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
+                    try:
+                        if len(mail['body']) > (16000 * (750/1000)):
+                            typer.secho(f"Email too long to send to LLM, SKIPPING", err=True, fg=typer.colors.RED)
+                            continue
+                        folder = emailLLM.predict_folder(mail, email_handler.get_subfolders(config['flagged_folders']))
+                        email_handler.move_mail([mail['uid']], folder)
+                    except ValueError as e:
+                        typer.secho(f"LLM Predicted Invalid Folder, SKIPPING", err=True, fg=typer.colors.RED)
+                        continue
+                # with ThreadPoolExecutor(max_workers=2) as executor:
+                #     folders = email_handler.get_subfolders(config['flagged_folders'])
+                #     llm_process_mail_partial = partial(llm_process_mail, emailLLM=emailLLM, all_folders=folders)
+                #     folder_emails = {folder: [] for folder in folders}
+                #     for mail, folder in tqdm(executor.map(llm_process_mail_partial, new_emails.iterrows()), desc="Classifying Emails", total=new_emails.shape[0]):
+                #         if folder is not None:
+                #             folder_emails[folder].append(mail[1]['uid'])
+                #     for folder, emails in folder_emails.items():
+                #         email_handler.move_mail(emails, folder)
+            typer.echo("All emails classified. Sleeping for 5 minutes.")
+            
         time.sleep(300)  # Wait for 5 minutes
 
 def llm_process_mail(mail, emailLLM, all_folders):
