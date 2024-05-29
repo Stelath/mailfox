@@ -76,26 +76,9 @@ def run():
                     except ValueError as e:
                         typer.secho(f"LLM Predicted Invalid Folder, SKIPPING", err=True, fg=typer.colors.RED)
                         continue
-                # with ThreadPoolExecutor(max_workers=2) as executor:
-                #     folders = email_handler.get_subfolders(config['flagged_folders'])
-                #     llm_process_mail_partial = partial(llm_process_mail, emailLLM=emailLLM, all_folders=folders)
-                #     folder_emails = {folder: [] for folder in folders}
-                #     for mail, folder in tqdm(executor.map(llm_process_mail_partial, new_emails.iterrows()), desc="Classifying Emails", total=new_emails.shape[0]):
-                #         if folder is not None:
-                #             folder_emails[folder].append(mail[1]['uid'])
-                #     for folder, emails in folder_emails.items():
-                #         email_handler.move_mail(emails, folder)
             typer.echo("All emails classified. Sleeping for 5 minutes.")
             
         time.sleep(300)  # Wait for 5 minutes
-
-def llm_process_mail(mail, emailLLM, all_folders):
-    try:
-        folder = emailLLM.predict_folder(mail[1], all_folders)
-        return mail, folder
-    except ValueError as e:
-        typer.secho(f"LLM Predicted Invalid Folder, SKIPPING", err=True, fg=typer.colors.RED)
-        return mail, None
 
 def download_emails(config, email_handler, vector_db):
     typer.echo("Fetching all Mail")
