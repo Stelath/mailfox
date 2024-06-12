@@ -2,6 +2,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 import numpy as np
+from tqdm.auto import tqdm
 
 class VectorDatabase():
     def __init__(self, db_path="./chroma_db/"):
@@ -30,4 +31,17 @@ class VectorDatabase():
         embeddings = np.array(docs['embeddings'])
         
         return {'ids': ids, 'embeddings': embeddings}
+    
+    def store_emails(self, emails: list[dict]):
+        for idx, mail in enumerate(tqdm(emails, desc="Saving Emails to Database")):
+            embedding = self.embed_email(mail)
+            
+            uuid = mail['uuid']
+            del mail['uuid']
+            
+            self.emails_collection.add(
+                ids=[uuid],
+                embeddings=embedding,
+                metadatas=[mail]
+            )
 

@@ -46,8 +46,13 @@ def run():
         clustering_path = os.path.expanduser(config['clustering_path'])
         if os.path.exists(clustering_path):
             clustering = FolderCluster.load_model(clustering_path)
+            
         else:
-            clustering.fit()
+            folder_vectors = {}
+            for folder in email_handler.get_subfolders(config['flagged_folders']):
+                folder_vectors[folder] = vector_db.emails_collection.get(where={'folder': folder}, include=['embeddings'])['embeddings']
+            
+            clustering = FolderCluster(folder_vectors)
             clustering.save_model(clustering_path)
     elif config['default_classifier'] == "llm":
         emailLLM = EmailLLM(api_key)
@@ -57,13 +62,14 @@ def run():
     
     while True:
         new_emails = email_handler.get_mail(filter='unseen', return_dataframe=True)
+        vector_db.store_emails(new_emails.to_dict(orient='records'))
         
         if new_emails.shape[0] == 0:
             typer.echo("No new emails found. Sleeping for 5 minutes.")
         else:
             if config['default_classifier'] == "clustering":
                 for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
-                    folder = clustering.predict_folder(mail)
+                    folder = clustering.single_predict(vector_db.embed_email(mail.to_dict()))
                     email_handler.move_mail([mail['uid']], folder)
             elif config['default_classifier'] == "llm":
                 for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
@@ -84,14 +90,7 @@ def download_emails(config, email_handler, vector_db):
     typer.echo("Fetching all Mail")
     all_mail = email_handler.get_mail(filter='all', folders=email_handler.get_subfolders(config['flagged_folders']), return_dataframe=True)
         
-    for idx, mail in tqdm(all_mail.iterrows(), desc="Generating Database", total=all_mail.shape[0]):
-        embedding = vector_db.embed_email(mail)
-        
-        vector_db.emails_collection.add(
-            ids=[mail['uuid']],
-            embeddings=embedding,
-            metadatas=dict(mail.drop('uuid'))
-        )
+    vector_db.store_emails(all_mail.to_dict(orient='records'))
 
 
 # SETUP WIZARD

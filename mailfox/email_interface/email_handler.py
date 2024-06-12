@@ -49,6 +49,8 @@ class EmailHandler():
         result, data = self.mail.list()
         return [d.decode('utf-8').split(' "/" ')[1] for d in data]
     
+    # FIXME: Will list subfolders of say "personal" as "personal/finance", but also (and incorrectly) as
+    # "other_dir/personal", order doesn't matter to it
     def get_subfolders(self, folders):
         folders = self.format_folders(folders, plain=True)
         all_folders = self.get_all_folders()

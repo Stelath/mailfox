@@ -37,11 +37,13 @@ class HDBCluster():
         
 
 class FolderCluster():
-    def __init__(self, folders):
-        # Folders is a dictionary of folder names and their vectors
-        self.folders = list(folders.keys())
-        self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in folders.items()}
-        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
+    def __init__(self, folders, load_from_pkl = False):
+        if not load_from_pkl:
+            # Folders is a dictionary of folder names and their vectors
+            self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in folders.items() if len(vectors) > 0}
+            self.folders = list(self.centroids.keys())
+            
+            self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
     
     def add_folder(self, folder, vectors):
         self.folders.append(folder)
@@ -50,15 +52,28 @@ class FolderCluster():
     
     def single_predict(self, vector):
         pred = self.nbrs.predict(vector.reshape(1, -1))
-        return self.folders[pred]
+        return self.folders[pred.item()]
     
     def predict(self, vectors):
         pred = self.nbrs.predict(vectors)
         return [self.folders[p] for p in pred]
             
     def save_model(self, path):
-        pickle.dump((self.folders, self.centroids), open(path, 'wb'))
+        with open(path, 'wb') as file:
+            pickle.dump((self.folders, self.centroids), file)
     
-    def load_model(self, path):
-        self.folders, self.centroids = pickle.load(open(path, 'rb'))
-        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()))
+    @classmethod
+    def load_model(cls, path):
+        try:
+            with open(path, 'rb') as file:
+                folders, centroids = pickle.load(file)
+            
+            instance = cls(None, load_from_pkl=True)
+            instance.folders = folders
+            instance.centroids = centroids
+            instance.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance')
+            instance.nbrs.fit(list(centroids.values()), range(len(folders)))
+            return instance
+        except Exception as e:
+            print(f"An error occurred while loading the model: {e}")
+            return None
