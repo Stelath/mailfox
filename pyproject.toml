@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "mailfox"
+version = "0.1.4"
+description = "Mailfox is a simple and fast ai powered email toolkit to enhance you email workflow"
+authors = ["Alex Korte <alex.k.korte@gmail.com>"]
+license = "GNU GPLv3"
+readme = "README.md"
+packages = [{include = "mailfox"}]
+repository = "https://github.com/stelath/mailfox"    # Update with your project's repository URL
+
+[tool.poetry.dependencies]
+python = "^3.8"
+typer = ">=0.3.2,<1.0.0"
+pyyaml = ">=6.0,<7.0"
+
+[tool.poetry.scripts]
+mailfox = "mailfox.__main__:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+python_version = "3.8"
+files = "mailfox"
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = "E203,W503"
