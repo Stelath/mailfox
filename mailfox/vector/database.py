@@ -47,7 +47,12 @@ class VectorDatabase():
     
     def store_emails(self, emails: list[dict]):
         for idx, mail in enumerate(tqdm(emails, desc="Saving Emails to Database")):
-            embedding = self.embed_email(mail)
+            
+            try:
+                embedding = self.embed_email(mail)
+            except Exception as e:
+                print(f"Error embedding email {idx}: {e}")
+                continue
             
             uuid = mail['uuid']
             del mail['uuid']

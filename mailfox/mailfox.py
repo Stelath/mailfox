@@ -14,6 +14,26 @@ from concurrent.futures import ThreadPoolExecutor
 
 app = typer.Typer()
 
+def get_vector_db(api_key, *, email_handler):
+    config = get_config()
+    
+    email_db_path = os.path.expanduser(config['email_db_path'])
+    if os.path.exists(email_db_path) and not VectorDatabase(email_db_path).is_emails_empty():
+        vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key)
+    elif email_handler is not None:
+        typer.echo("It looks like you don't have an email database yet. Let's create one!")
+        should_download_emails = typer.confirm("Would you like to download all your emails now?")
+        if should_download_emails:
+            vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key)
+            download_emails(config, email_handler, vector_db)
+        else:
+            typer.echo("Not downloading emails, exiting.")
+            return
+    else:
+        typer.echo("It looks like you don't have an email database yet. Please download emails first.")
+
+    return vector_db
+
 @app.command()
 def run():
     try:
@@ -29,19 +49,9 @@ def run():
         return
 
     email_handler = EmailHandler(username, password)
-    
-    email_db_path = os.path.expanduser(config['email_db_path'])
-    if os.path.exists(email_db_path) and not VectorDatabase(email_db_path).is_emails_empty():
-        vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key)
-    else:
-        typer.echo("It looks like you don't have an email database yet. Let's create one!")
-        should_download_emails = typer.confirm("Would you like to download all your emails now?")
-        if should_download_emails:
-            vector_db = VectorDatabase(email_db_path)
-            download_emails(config, email_handler, vector_db)
-        else:
-            typer.echo("Not downloading emails, exiting.")
-            return
+    vector_db = get_vector_db(api_key=api_key, email_handler=email_handler)
+    if vector_db is None:
+        return
     
     if config['default_classifier'] == "clustering":
         clustering_path = os.path.expanduser(config['clustering_path'])
@@ -63,15 +73,21 @@ def run():
     
     while True:
         new_emails = email_handler.get_mail(filter='unseen', return_dataframe=True)
-        vector_db.store_emails(new_emails.to_dict(orient='records'))
+        # vector_db.store_emails(new_emails.to_dict(orient='records'))
         
         if new_emails.shape[0] == 0:
             typer.echo("No new emails found. Sleeping for 5 minutes.")
         else:
             if config['default_classifier'] == "clustering":
                 for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
-                    folder = clustering.single_predict(vector_db.embed_email(mail.to_dict()))
-                    email_handler.move_mail([mail['uid']], folder)
+                    try:
+                        folder = clustering.single_predict(vector_db.embed_email(mail.to_dict()))
+                        if folder is not None:
+                            email_handler.move_mail([mail['uid']], folder)
+                        else:
+                            continue
+                    except Exception as e:
+                        typer.secho(f"Clustering failed for {mail['uuid']}: {e}", err=True, fg=typer.colors.RED)
             elif config['default_classifier'] == "llm":
                 for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
                     try:
@@ -152,6 +168,57 @@ def remove_database():
 # Clustering Commands
 clustering_app = typer.Typer()
 app.add_typer(clustering_app, name="clustering")
+
+@clustering_app.command("train")
+def train_clustering(re_download: Optional[bool] = False):
+    config = get_config()
+    username, password, api_key = retrieve_credentials()
+    email_handler = EmailHandler(username, password)
+    vector_db = get_vector_db(api_key=api_key, email_handler=email_handler)
+    
+    if re_download:
+        folder_vectors = {}
+        all_mail = email_handler.get_mail(filter='all', folders=email_handler.get_subfolders(config['flagged_folders']), return_dataframe=True)
+        uuids = all_mail['uuid'].to_numpy()
+        
+        typer.echo("Updating email folders in DB")
+        
+        uuid_list = list(uuids)
+        folder_list = list(all_mail['folder'].to_numpy())
+        
+        seen = set()
+        unique_uuid_list = []
+        unique_folder_list = []
+        
+        for uuid, folder in zip(uuid_list, folder_list):
+            if uuid not in seen:
+                seen.add(uuid)
+                unique_uuid_list.append(uuid)
+                unique_folder_list.append(folder)
+        
+        uuid_list = unique_uuid_list
+        folder_list = unique_folder_list
+        
+        vector_db.emails_collection.update(uuid_list, metadatas=[{'folder': folder} for folder in folder_list])
+    
+    # for email in tqdm(db_emails, desc="Syncing Emails with DB"):
+    #     current_folder = all_mail[all_mail['uuid'] == email['id']]['folder'].values[0]
+    #     if email['folder'] != current_folder:
+    #         vector_db.emails_collection.update(email['id'], {'folder': current_folder})
+    
+    clustering_path = os.path.expanduser(config['clustering_path'])
+    
+    if os.path.exists(clustering_path):
+        typer.echo("Old clustering model detected, removing")
+        os.remove(clustering_path)
+    
+    folder_vectors = {}
+    for folder in email_handler.get_subfolders(config['flagged_folders']):
+        folder_vectors[folder] = vector_db.emails_collection.get(where={'folder': folder}, include=['embeddings'])['embeddings']
+    
+    clustering = FolderCluster(folder_vectors)
+    clustering.save_model(clustering_path)
+    typer.echo("Clustering model trained and saved")
 
 @clustering_app.command("remove")
 def remove_clustering():

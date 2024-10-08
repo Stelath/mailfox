@@ -37,42 +37,66 @@ class HDBCluster():
         
 
 class FolderCluster():
-    def __init__(self, folders, load_from_pkl = False):
-        if not load_from_pkl:
+    def __init__(self, folders=None, load_from_pkl=False, distance_threshold=0.75):
+        if not load_from_pkl and folders is not None:
             # Folders is a dictionary of folder names and their vectors
             self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in folders.items() if len(vectors) > 0}
             self.folders = list(self.centroids.keys())
-            
-            self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
+        elif load_from_pkl:
+            # Load when using a pre-trained model
+            self.centroids = {}
+            self.folders = []
+        
+        self.distance_threshold = distance_threshold  # Set distance cutoff threshold
     
     def add_folder(self, folder, vectors):
+        """Adds a new folder and recalculates its centroid."""
         self.folders.append(folder)
         self.centroids[folder] = np.mean(vectors, axis=0)
-        self.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance').fit(list(self.centroids.values()), range(len(self.folders)))
+    
+    def calculate_distance(self, vector1, vector2):
+        """Calculate Euclidean distance between two vectors."""
+        return np.linalg.norm(vector1 - vector2)
     
     def single_predict(self, vector):
-        pred = self.nbrs.predict(vector.reshape(1, -1))
-        return self.folders[pred.item()]
+        """Predicts the nearest folder for a single vector."""
+        closest_folder, closest_distance = None, float('inf')
+        
+        for folder, centroid in self.centroids.items():
+            distance = self.calculate_distance(vector, centroid)
+            if distance < closest_distance:
+                closest_folder, closest_distance = folder, distance
+        
+        # Return the closest folder if within threshold, otherwise None
+        if closest_distance <= self.distance_threshold:
+            return closest_folder
+        else:
+            return None
     
     def predict(self, vectors):
-        pred = self.nbrs.predict(vectors)
-        return [self.folders[p] for p in pred]
+        """Predicts the nearest folder for a list of vectors."""
+        predictions = []
+        for vector in vectors:
+            prediction = self.single_predict(vector)
+            predictions.append(prediction)
+        return predictions
             
     def save_model(self, path):
+        """Save the current folder structure and centroids."""
         with open(path, 'wb') as file:
-            pickle.dump((self.folders, self.centroids), file)
+            pickle.dump((self.folders, self.centroids, self.distance_threshold), file)
     
     @classmethod
     def load_model(cls, path):
+        """Load a saved model from a pickle file."""
         try:
             with open(path, 'rb') as file:
-                folders, centroids = pickle.load(file)
+                folders, centroids, distance_threshold = pickle.load(file)
             
-            instance = cls(None, load_from_pkl=True)
+            instance = cls(load_from_pkl=True)
             instance.folders = folders
             instance.centroids = centroids
-            instance.nbrs = KNeighborsClassifier(n_neighbors=3, weights='distance')
-            instance.nbrs.fit(list(centroids.values()), range(len(folders)))
+            instance.distance_threshold = distance_threshold
             return instance
         except Exception as e:
             print(f"An error occurred while loading the model: {e}")

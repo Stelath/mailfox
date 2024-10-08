@@ -108,8 +108,8 @@ class EmailHandler():
                 self.mail.select(folder)
                 for num in tqdm(uids, desc=f"Getting Emails from {folder}", position=1, leave=False):
                     result, email_data = self.mail.uid('fetch', num, '(BODY.PEEK[])') # fetch the email body (peek = not mark as read)
-                    raw_email = email_data[0][1]
                     try:
+                        raw_email = email_data[0][1]
                         raw_email_string = raw_email.decode('utf-8')
                     except:
                         continue
@@ -145,6 +145,10 @@ class EmailHandler():
                     soup = BeautifulSoup(body, 'lxml')
                     body = soup.get_text()
                     body = self._strip_repeated_chars(body)
+                    
+                    # No point in saving the email if there isn't a readable body
+                    if body == "":
+                        continue
                     
                     # return the email details
                     emails.append({'uid': uid, 'folder': folder, 'uuid': uuid, 'from': email_from, 'to': email_to, 'subject': subject, 'date': local_message_date, 'body': body, 'raw_body': raw_body})

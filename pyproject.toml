@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mailfox"
-version = "0.1.4"
+version = "0.1.5"
 description = "Mailfox is a simple and fast ai powered email toolkit to enhance you email workflow"
 authors = ["Alex Korte <alex.k.korte@gmail.com>"]
 license = "GNU GPLv3"
