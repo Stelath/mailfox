@@ -5,6 +5,8 @@ from tqdm.auto import tqdm
 from enum import Enum
 import sqlite3
 import textwrap
+import os
+
 
 class EmbeddingFunctions(str, Enum):
     SENTENCE_TRANSFORMER = "st"
@@ -16,8 +18,8 @@ MAX_TOKENS = {
 }
 
 class VectorDatabase():
-    def __init__(self, db_path="./chroma_db/", *, embedding_function=None, openai_api_key=None, email_db_path="./emails.db"):
-        self.chroma_client = chromadb.PersistentClient(db_path)
+    def __init__(self, db_path="./data/", *, embedding_function=None, openai_api_key=None):
+        self.chroma_client = chromadb.PersistentClient(os.path.join(db_path, "chroma"))
         if embedding_function == EmbeddingFunctions.OPENAI:
             self.default_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=openai_api_key, model_name="text-embedding-3-small")
             self.max_tokens = MAX_TOKENS["text-embedding-3-small"]
@@ -26,7 +28,7 @@ class VectorDatabase():
             self.max_tokens = MAX_TOKENS["all-MiniLM-L6-v2"]
         
         self.emails_collection = self.chroma_client.get_or_create_collection(name="emails", embedding_function=self.default_ef)
-        self.email_db_path = email_db_path
+        self.email_db_path = os.path.join(db_path, "emails.db")
         self._init_email_db()
 
     def _init_email_db(self):
