@@ -137,7 +137,7 @@ def init():
     if should_download_emails:
         config = get_config()
         email_handler = EmailHandler(username, password)
-        vector_db = VectorDatabase(config['email_db_path'])
+        vector_db = VectorDatabase(os.path.expanduser(config['email_db_path']), embedding_function=default_embedding_function, openai_api_key=api_key)
         download_emails(config, email_handler, vector_db)
     else:
         typer.echo("Email download skipped.")

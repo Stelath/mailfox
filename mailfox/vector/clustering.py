@@ -37,7 +37,7 @@ class HDBCluster():
         
 
 class FolderCluster():
-    def __init__(self, folders=None, load_from_pkl=False, distance_threshold=0.75):
+    def __init__(self, folders=None, load_from_pkl=False, distance_threshold=0.8):
         if not load_from_pkl and folders is not None:
             # Folders is a dictionary of folder names and their vectors
             self.centroids = {folder: np.mean(vectors, axis=0) for folder, vectors in folders.items() if len(vectors) > 0}
