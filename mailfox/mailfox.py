@@ -1,37 +1,33 @@
 import os
 import yaml
 from tqdm.auto import tqdm
-import click
 import typer
-from typing_extensions import Annotated
-from typing import Optional
-from .email_interface import EmailHandler, EmailLLM
-from .vector import VectorDatabase, FolderCluster, EmbeddingFunctions
+from typing import Optional, Annotated
+from .email_interface import EmailHandler
+from .vector import VectorDatabase, KMeansCluster, EmbeddingFunctions
 import time
-from functools import partial
-
-from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
 
 app = typer.Typer()
 
 def get_vector_db(api_key, *, email_handler):
     config = get_config()
-    
     email_db_path = os.path.expanduser(config['email_db_path'])
-    if os.path.exists(email_db_path) and not VectorDatabase(email_db_path).is_emails_empty():
-        vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key)
+    email_sqlite_db_path = os.path.expanduser(config.get('email_sqlite_db_path', './emails.db'))
+
+    if os.path.exists(email_db_path) and not VectorDatabase(email_db_path, email_db_path=email_sqlite_db_path).is_emails_empty():
+        vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key, email_db_path=email_sqlite_db_path)
     elif email_handler is not None:
         typer.echo("It looks like you don't have an email database yet. Let's create one!")
         should_download_emails = typer.confirm("Would you like to download all your emails now?")
         if should_download_emails:
-            vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key)
+            vector_db = VectorDatabase(email_db_path, embedding_function=config["default_embedding_function"], openai_api_key=api_key, email_db_path=email_sqlite_db_path)
             download_emails(config, email_handler, vector_db)
         else:
             typer.echo("Not downloading emails, exiting.")
             return
     else:
         typer.echo("It looks like you don't have an email database yet. Please download emails first.")
-
     return vector_db
 
 @app.command()
@@ -41,7 +37,7 @@ def run():
     except FileNotFoundError:
         typer.secho('Please save your credentials with the "credentials set" command!', err=True, fg=typer.colors.RED)
         return
-    
+
     try:
         config = get_config()
     except FileNotFoundError:
@@ -52,63 +48,78 @@ def run():
     vector_db = get_vector_db(api_key=api_key, email_handler=email_handler)
     if vector_db is None:
         return
-    
-    if config['default_classifier'] == "clustering":
-        clustering_path = os.path.expanduser(config['clustering_path'])
-        if os.path.exists(clustering_path):
-            clustering = FolderCluster.load_model(clustering_path)
-            
-        else:
-            folder_vectors = {}
-            for folder in email_handler.get_subfolders(config['flagged_folders']):
-                folder_vectors[folder] = vector_db.emails_collection.get(where={'folder': folder}, include=['embeddings'])['embeddings']
-            
-            clustering = FolderCluster(folder_vectors)
-            clustering.save_model(clustering_path)
-    elif config['default_classifier'] == "llm":
-        emailLLM = EmailLLM(api_key)
-    else:
-        typer.secho(f"Invalid default classifier: {config['default_classifier']}", err=True, fg=typer.colors.RED)
-        return
-    
+
     while True:
+        update_email_folder_changes(email_handler, vector_db)
+        retrain_classifier(vector_db, config)
         new_emails = email_handler.get_mail(filter='unseen', return_dataframe=True)
-        # vector_db.store_emails(new_emails.to_dict(orient='records'))
-        
         if new_emails.shape[0] == 0:
             typer.echo("No new emails found. Sleeping for 5 minutes.")
         else:
-            if config['default_classifier'] == "clustering":
-                for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
-                    try:
-                        folder = clustering.single_predict(vector_db.embed_email(mail.to_dict()))
-                        if folder is not None:
-                            email_handler.move_mail([mail['uid']], folder)
-                        else:
-                            continue
-                    except Exception as e:
-                        typer.secho(f"Clustering failed for {mail['uuid']}: {e}", err=True, fg=typer.colors.RED)
-            elif config['default_classifier'] == "llm":
-                for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
-                    try:
-                        if len(mail['body']) > (16000 * (750/1000)):
-                            typer.secho(f"Email too long to send to LLM, SKIPPING", err=True, fg=typer.colors.RED)
-                            continue
-                        folder = emailLLM.predict_folder(mail, email_handler.get_subfolders(config['flagged_folders']))
-                        email_handler.move_mail([mail['uid']], folder)
-                    except ValueError as e:
-                        typer.secho(f"LLM Predicted Invalid Folder, SKIPPING", err=True, fg=typer.colors.RED)
-                        continue
+            vector_db.store_emails(new_emails.to_dict(orient='records'))
+            embeddings = []
+            classes = []
+            for idx, mail in tqdm(new_emails.iterrows(), desc="Classifying Emails", total=new_emails.shape[0]):
+                try:
+                    paragraphs = mail['paragraphs']
+                    email_embeddings = vector_db.embed_paragraphs(paragraphs)
+                    embeddings.extend(email_embeddings)
+                    predicted_classes = clustering.find_closest_class(email_embeddings, clustering.kmeans.labels_)
+                    class_counts = Counter(predicted_classes)
+                    predicted_class = class_counts.most_common(1)[0][0]
+                    email_handler.move_mail([mail['uid']], predicted_class)
+                except Exception as e:
+                    typer.secho(f"Classification failed for {mail['uuid']}: {e}", err=True, fg=typer.colors.RED)
             typer.echo("All emails classified. Sleeping for 5 minutes.")
-            
-        time.sleep(300)  # Wait for 5 minutes
+        time.sleep(300)
+
+def update_email_folder_changes(email_handler, vector_db):
+    typer.echo("Updating email folder changes...")
+    vector_db.cursor.execute('SELECT uuid, folder, message_id FROM emails')
+    emails_in_db = vector_db.cursor.fetchall()
+
+    # Get a list of all folders
+    all_folders = email_handler.get_all_folders()
+
+    # Build a mapping of message_id to current folder
+    message_id_folder_map = email_handler.get_message_id_folder_mapping(all_folders)
+
+    # Update the folder information in the database
+    updates_made = False
+    for uuid, stored_folder, message_id in tqdm(emails_in_db, desc="Checking for moved emails"):
+        current_folder = message_id_folder_map.get(message_id)
+        if current_folder and current_folder != stored_folder:
+            vector_db.update_email_folder(uuid, current_folder)
+            # Update metadata in the vector database
+            paragraph_count = len(vector_db.emails_collection.get(where={'uuid': uuid})['ids'])
+            ids = [f"{uuid}_{i}" for i in range(paragraph_count)]
+            metadatas = [{'uuid': uuid, 'folder': current_folder, 'paragraph_index': i} for i in range(paragraph_count)]
+            vector_db.emails_collection.update(ids=ids, metadatas=metadatas)
+            updates_made = True
+            typer.echo(f"Updated email {uuid} to folder {current_folder}")
+
+    if updates_made:
+        typer.echo("Folder changes detected and updated.")
+    else:
+        typer.echo("No folder changes detected.")
+
+def retrain_classifier(vector_db, config):
+    typer.echo("Retraining classifier...")
+    embeddings_data = vector_db.emails_collection.get(include=['embeddings', 'metadatas'])
+    embeddings = embeddings_data['embeddings']
+    metadatas = embeddings_data['metadatas']
+    classes = [meta.get('folder', 'unknown') for meta in metadatas]
+    global clustering
+    clustering = KMeansCluster(n_clusters=config.get('n_clusters', 10))
+    clustering.fit(embeddings)
+    clustering_path = os.path.expanduser(config['clustering_path'])
+    clustering.save_model(clustering_path)
+    typer.echo("Classifier retrained.")
 
 def download_emails(config, email_handler, vector_db):
     typer.echo("Fetching all Mail")
     all_mail = email_handler.get_mail(filter='all', folders=email_handler.get_subfolders(config['flagged_folders']), return_dataframe=True)
-        
     vector_db.store_emails(all_mail.to_dict(orient='records'))
-
 
 # SETUP WIZARD
 @app.command()

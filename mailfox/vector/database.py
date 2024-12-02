@@ -1,65 +1,119 @@
 import chromadb
 from chromadb.utils import embedding_functions
-
 import numpy as np
 from tqdm.auto import tqdm
-
 from enum import Enum
+import sqlite3
+import textwrap
 
 class EmbeddingFunctions(str, Enum):
     SENTENCE_TRANSFORMER = "st"
     OPENAI = "openai"
 
+MAX_TOKENS = {
+    "text-embedding-3-small": 8191,
+    "all-MiniLM-L6-v2": 384
+}
+
 class VectorDatabase():
-    def __init__(self, db_path="./chroma_db/", *, embedding_function=None, openai_api_key=None):
+    def __init__(self, db_path="./chroma_db/", *, embedding_function=None, openai_api_key=None, email_db_path="./emails.db"):
         self.chroma_client = chromadb.PersistentClient(db_path)
-        
-        if embedding_function is None or embedding_function == "st":
-            self.default_ef = embedding_functions.DefaultEmbeddingFunction()
-        elif embedding_function == "openai":
+        if embedding_function == EmbeddingFunctions.OPENAI:
             self.default_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=openai_api_key, model_name="text-embedding-3-small")
+            self.max_tokens = MAX_TOKENS["text-embedding-3-small"]
         else:
-            raise ValueError("Invalid embedding function")
+            self.default_ef = embedding_functions.DefaultEmbeddingFunction()
+            self.max_tokens = MAX_TOKENS["all-MiniLM-L6-v2"]
         
         self.emails_collection = self.chroma_client.get_or_create_collection(name="emails", embedding_function=self.default_ef)
-    
+        self.email_db_path = email_db_path
+        self._init_email_db()
+
+    def _init_email_db(self):
+        self.conn = sqlite3.connect(self.email_db_path)
+        self.cursor = self.conn.cursor()
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS emails (
+                uuid TEXT PRIMARY KEY,
+                uid TEXT,
+                folder TEXT,
+                sender TEXT,
+                recipient TEXT,
+                subject TEXT,
+                date TEXT,
+                message_id TEXT,
+                raw_body TEXT
+            )
+        ''')
+        self.conn.commit()
+
     def is_emails_empty(self):
         docs = self.emails_collection.get(include=[])
         return len(docs['ids']) == 0
-    
+
     def embed(self, text: list[str]):
         return self.default_ef(text)
-    
-    def embed_email(self, email: dict):
-        embeddings = np.array(self.default_ef([email['from'] + " " + email['subject'], email['body']]))
-        # embedding = embeddings[0] * 0.3 + embeddings[1] * 0.2 + embeddings[2] * 0.5
-        embedding = embeddings[0] * 0.3 + embeddings[1] * 0.7
-        embedding = embedding.reshape(1, -1)
-        
-        return embedding
-    
-    def get_all_embeddings(self, collection=None):
-        docs = self.emails_collection.get(include=['embeddings'])
-        ids = docs['ids']
-        embeddings = np.array(docs['embeddings'])
-        
-        return {'ids': ids, 'embeddings': embeddings}
-    
+
+    def _chunk_text(self, text: str) -> list[str]:
+        """Break text into chunks that fit within token limit"""
+        # Estimate ~4 chars per token
+        chars_per_chunk = self.max_tokens * 4
+        chunks = textwrap.wrap(text, width=chars_per_chunk, break_long_words=True)
+        return chunks
+
+    def embed_paragraphs(self, paragraphs: list[str]):
+        chunked_paragraphs = []
+        for p in paragraphs:
+            chunks = self._chunk_text(p)
+            chunked_paragraphs.extend(chunks)
+            
+        embeddings = self.embed(chunked_paragraphs)
+        return embeddings
+
     def store_emails(self, emails: list[dict]):
         for idx, mail in enumerate(tqdm(emails, desc="Saving Emails to Database")):
-            
             try:
-                embedding = self.embed_email(mail)
+                paragraphs = mail.get('paragraphs', [])
+                if not paragraphs:
+                    continue
+                
+                # Get embeddings for chunked paragraphs
+                embeddings = self.embed_paragraphs(paragraphs)
             except Exception as e:
                 print(f"Error embedding email {idx}: {e}")
                 continue
-            
+
             uuid = mail['uuid']
-            del mail['uuid']
-            
+
+            # Store email metadata in SQLite database
+            self.cursor.execute('''
+                INSERT OR REPLACE INTO emails (uuid, uid, folder, sender, recipient, subject, date, message_id, raw_body)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (uuid, mail['uid'], mail['folder'], mail['from'], mail['to'], mail['subject'], mail['date'], mail['message_id'], mail['raw_body']))
+            self.conn.commit()
+
+            # Store embeddings in ChromaDB
+            ids = [f"{uuid}_{i}" for i in range(len(embeddings))]
+            metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(embeddings))]
             self.emails_collection.add(
-                ids=[uuid],
-                embeddings=embedding,
-                metadatas=[mail]
+                ids=ids,
+                embeddings=embeddings,
+                metadatas=metadatas
             )
 
+    def get_all_embeddings(self):
+        docs = self.emails_collection.get(include=['embeddings'])
+        ids = docs['ids']
+        embeddings = np.array(docs['embeddings'])
+        return {'ids': ids, 'embeddings': embeddings}
+
+    def get_email_by_uuid(self, uuid):
+        self.cursor.execute('SELECT * FROM emails WHERE uuid=?', (uuid,))
+        return self.cursor.fetchone()
+
+    def update_email_folder(self, uuid, new_folder):
+        self.cursor.execute('UPDATE emails SET folder=? WHERE uuid=?', (new_folder, uuid))
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
