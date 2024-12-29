@@ -18,11 +18,14 @@ def process_folder_update(
     """Process updates in a monitored folder."""
     try:
         if not emails.empty:
-            action = "Recaching" if recache else "Processing"
-            typer.echo(f"{action} {len(emails)} emails in {folder}")
-            vector_db.store_emails(emails.to_dict(orient="records"))
-            if not recache:
-                process_new_mail(folder, email_handler, vector_db)
+            if recache:
+                typer.echo(f"Recaching {len(emails)} emails in {folder}")
+                vector_db.store_emails(emails.to_dict(orient="records"))
+            else:
+                typer.echo(f"Processing {len(emails)} new emails in {folder}")
+                vector_db.store_emails(emails.to_dict(orient="records"))
+                if folder == "INBOX":
+                    process_new_mail(folder, email_handler, vector_db)
     except Exception as e:
         typer.secho(
             f"Error processing folder {folder} update: {str(e)}",
@@ -36,19 +39,23 @@ def get_vector_db(api_key: Optional[str]) -> Optional[VectorDatabase]:
         config = read_config()
         email_db_path = os.path.expanduser(config["email_db_path"])
         
-        if os.path.exists(email_db_path) and not VectorDatabase(email_db_path).is_emails_empty():
-            return VectorDatabase(
-                db_path=email_db_path,
-                embedding_function=config["default_embedding_function"],
-                openai_api_key=api_key,
-            )
-        else:
+        # Create database directory if it doesn't exist
+        os.makedirs(email_db_path, exist_ok=True)
+        
+        # Initialize vector database
+        vector_db = VectorDatabase(
+            db_path=email_db_path,
+            embedding_function=config["default_embedding_function"],
+            openai_api_key=api_key,
+        )
+        
+        if vector_db.is_emails_empty():
             typer.secho(
-                "No email database found. Please initialize the database first.",
-                err=True,
-                fg=typer.colors.RED
+                "Email database is empty. It will be initialized when emails are processed.",
+                fg=typer.colors.YELLOW
             )
-            return None
+        
+        return vector_db
     except Exception as e:
         typer.secho(
             f"Error initializing vector database: {str(e)}",
@@ -79,8 +86,22 @@ def run_application() -> None:
         else:
             typer.echo("Using existing clustering model.")
             
-        # Start monitoring
-        folders_to_monitor = config.get("flagged_folders", ["INBOX"])
+        # Only download all emails if database is empty
+        if vector_db.is_emails_empty():
+            typer.echo("Email database is empty. Downloading all emails...")
+            folders_to_monitor = config.get("flagged_folders", ["INBOX"])
+            for folder in folders_to_monitor:
+                emails = email_handler.get_mail(
+                    filter="all",
+                    folders=[folder],
+                    return_dataframe=True
+                )
+                if not emails.empty:
+                    typer.echo(f"Storing {len(emails)} emails from {folder}")
+                    vector_db.store_emails(emails.to_dict(orient="records"))
+        
+        # Start monitoring for new emails and UID validity changes
+        folders_to_monitor = config.get("flagged_folders", [])
         check_interval = config.get("check_interval", 300)
         enable_uid_validity = config.get("enable_uid_validity", True)
         recache_limit = config.get("recache_limit", 100)

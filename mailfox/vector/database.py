@@ -7,6 +7,7 @@ import sqlite3
 import textwrap
 import os
 import tiktoken
+from ..core.auth import read_credentials
 
 class EmbeddingFunctions(str, Enum):
     SENTENCE_TRANSFORMER = "st"
@@ -22,6 +23,9 @@ class VectorDatabase():
         self.chroma_client = chromadb.PersistentClient(os.path.join(db_path, "chroma"))
         self.embedding_function_type = embedding_function
         if embedding_function == EmbeddingFunctions.OPENAI:
+            if not openai_api_key:
+                raise ValueError("OpenAI API key is required for OpenAI embeddings")
+                
             self.default_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=openai_api_key, model_name="text-embedding-3-small")
             self.max_tokens = MAX_TOKENS["text-embedding-3-small"]
             self.tokenizer = tiktoken.get_encoding("cl100k_base")  # OpenAI's encoding
@@ -178,8 +182,10 @@ class VectorDatabase():
                 new_data = [(i, id) for i, id in enumerate(ids) if id not in existing_ids]
                 if new_data:
                     new_indices, new_ids = zip(*new_data)
+                    # Convert tuple to list for ChromaDB
+                    new_ids_list = list(new_ids)
                     self.emails_collection.add(
-                        ids=new_ids,
+                        ids=new_ids_list,
                         embeddings=[embeddings[i] for i in new_indices],
                         metadatas=[metadatas[i] for i in new_indices]
                     )

@@ -76,6 +76,7 @@ class EmailHandler:
     def poll_folders(self, folders, callback, check_interval=300, enable_uid_validity=True, recache_limit=100):
         """Poll folders for changes at specified interval."""
         folder_uids = {folder: set() for folder in folders}
+        print("Folder UIDS:", folder_uids)
         
         while not self.stop_event.is_set():
             for folder in folders:
@@ -99,6 +100,9 @@ class EmailHandler:
                         
                     new_uids = current_uids - folder_uids[folder]
                     removed_uids = folder_uids[folder] - current_uids
+                    
+                    print("NEW UIDS:", new_uids)
+                    print("REMOVED UIDS", removed_uids)
                     
                     if new_uids or removed_uids:
                         folder_uids[folder] = current_uids
