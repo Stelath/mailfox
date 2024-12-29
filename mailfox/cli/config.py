@@ -7,6 +7,7 @@ from ..vector import EmbeddingFunctions
 
 config_app = typer.Typer(help="Manage MailFox configuration")
 
+
 @config_app.command("set")
 def set_config(
     email_db_path: Path = typer.Option(
