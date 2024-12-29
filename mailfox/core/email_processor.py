@@ -52,7 +52,7 @@ def classify_emails(new_emails, vector_db, email_handler):
         try:
             paragraphs = mail['paragraphs']
             email_embeddings = vector_db.embed_paragraphs(paragraphs)
-            predicted_classes = clustering.find_closest_class(email_embeddings, clustering.kmeans.labels_)
+            predicted_classes = clustering.find_closest_class(np.array(email_embeddings), clustering.kmeans.labels_)
             
             if isinstance(predicted_classes[0], list):
                 class_counts = Counter([cls for classes in predicted_classes for cls in classes])

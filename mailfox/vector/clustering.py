@@ -17,7 +17,7 @@ class KMeansCluster():
             embeddings: Input embeddings to cluster
             folders: List of folder names corresponding to embedding indices
         """
-        print("Fitting model with embeddings shape:", embeddings.shape)
+        print("Fitting model with embeddings shape:", embeddings)
         
         unique_folders = list(set(folders))
         self.n_clusters = len(unique_folders)

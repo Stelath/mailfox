@@ -11,7 +11,6 @@ from ..vector import VectorDatabase
 def process_folder_update(
     folder: str,
     emails: pd.DataFrame,
-    email_handler: EmailHandler,
     vector_db: VectorDatabase,
     recache: bool = False
 ) -> None:
@@ -24,11 +23,31 @@ def process_folder_update(
             else:
                 typer.echo(f"Processing {len(emails)} new emails in {folder}")
                 vector_db.store_emails(emails.to_dict(orient="records"))
-                if folder == "INBOX":
-                    process_new_mail(folder, email_handler, vector_db)
     except Exception as e:
         typer.secho(
             f"Error processing folder {folder} update: {str(e)}",
+            err=True,
+            fg=typer.colors.RED
+        )
+
+def check_inbox(
+    email_handler: EmailHandler,
+    vector_db: VectorDatabase
+) -> None:
+    """Check INBOX for new emails and classify them."""
+    try:
+        emails = email_handler.get_mail(
+            filter='unseen',
+            folders=["INBOX"],
+            return_dataframe=True
+        )
+        if not emails.empty:
+            typer.echo(f"Found {len(emails)} new emails in INBOX")
+            vector_db.store_emails(emails.to_dict(orient="records"))
+            process_new_mail("INBOX", email_handler, vector_db)
+    except Exception as e:
+        typer.secho(
+            f"Error checking INBOX: {str(e)}",
             err=True,
             fg=typer.colors.RED
         )
@@ -86,11 +105,13 @@ def run_application() -> None:
         else:
             typer.echo("Using existing clustering model.")
             
+        # Define classification folders
+        classification_folders = ["Education", "Finance", "Newsletters", "Notifications", "Personal"]
+        
         # Only download all emails if database is empty
         if vector_db.is_emails_empty():
             typer.echo("Email database is empty. Downloading all emails...")
-            folders_to_monitor = config.get("flagged_folders", ["INBOX"])
-            for folder in folders_to_monitor:
+            for folder in classification_folders:
                 emails = email_handler.get_mail(
                     filter="all",
                     folders=[folder],
@@ -100,23 +121,36 @@ def run_application() -> None:
                     typer.echo(f"Storing {len(emails)} emails from {folder}")
                     vector_db.store_emails(emails.to_dict(orient="records"))
         
+        # Initialize folder UIDs
+        folder_uids = {}
+        for folder in classification_folders:
+            email_handler.mail.select_folder(folder)
+            folder_uids[folder] = set(email_handler.mail.search(['ALL']))
+        
         # Start monitoring for new emails and UID validity changes
-        folders_to_monitor = config.get("flagged_folders", [])
         check_interval = config.get("check_interval", 300)
         enable_uid_validity = config.get("enable_uid_validity", True)
         recache_limit = config.get("recache_limit", 100)
         
         typer.echo(f"Starting email monitoring (checking every {check_interval} seconds)")
         try:
-            email_handler.poll_folders(
-                folders=folders_to_monitor,
-                callback=lambda folder, emails, recache=False: process_folder_update(
-                    folder, emails, email_handler, vector_db, recache
-                ),
-                check_interval=check_interval,
-                enable_uid_validity=enable_uid_validity,
-                recache_limit=recache_limit
-            )
+            while not email_handler.stop_event.is_set():
+                # First check inbox
+                check_inbox(email_handler, vector_db)
+                
+                # Then poll folders
+                email_handler.poll_folders(
+                    folders=classification_folders,
+                    folder_uids=folder_uids,
+                    callback=lambda folder, emails, recache=False: process_folder_update(
+                        folder, emails, email_handler, vector_db, recache
+                    ),
+                    enable_uid_validity=enable_uid_validity,
+                    recache_limit=recache_limit
+                )
+                
+                # Wait before next iteration
+                email_handler.stop_event.wait(check_interval)
         except KeyboardInterrupt:
             typer.echo("\nShutting down gracefully...")
         finally:

@@ -73,51 +73,39 @@ class EmailHandler:
             print(f"Error recaching folder {folder}: {e}")
             return pd.DataFrame()
 
-    def poll_folders(self, folders, callback, check_interval=300, enable_uid_validity=True, recache_limit=100):
-        """Poll folders for changes at specified interval."""
-        folder_uids = {folder: set() for folder in folders}
-        print("Folder UIDS:", folder_uids)
-        
-        while not self.stop_event.is_set():
-            for folder in folders:
-                try:
-                    # Check UID validity if enabled
-                    if enable_uid_validity and not self._check_uid_validity(folder):
-                        print(f"Recaching folder {folder}")
-                        emails = self._recache_folder(folder, recache_limit)
-                        if not emails.empty:
-                            callback(folder, emails, recache=True)
-                        continue
-
-                    # Get current UIDs
-                    self.mail.select_folder(folder)
-                    current_uids = set(self.mail.search(['ALL']))
-                    
-                    # Check for changes
-                    if folder not in folder_uids:
-                        folder_uids[folder] = current_uids
-                        continue
-                        
-                    new_uids = current_uids - folder_uids[folder]
-                    removed_uids = folder_uids[folder] - current_uids
-                    
-                    print("NEW UIDS:", new_uids)
-                    print("REMOVED UIDS", removed_uids)
-                    
-                    if new_uids or removed_uids:
-                        folder_uids[folder] = current_uids
-                        if new_uids:
-                            emails = self.get_mail(filter='all', folders=[folder], uids=list(new_uids), return_dataframe=True)
-                            if not emails.empty:
-                                callback(folder, emails)
-                
-                except Exception as e:
-                    print(f"Error polling folder {folder}: {e}")
-                    time.sleep(5)
+    def poll_folders(self, folders, folder_uids, callback, enable_uid_validity=True, recache_limit=100):
+        """Poll folders for changes."""
+        for folder in folders:
+            try:
+                # Check UID validity if enabled
+                if enable_uid_validity and not self._check_uid_validity(folder):
+                    print(f"Recaching folder {folder}")
+                    emails = self._recache_folder(folder, recache_limit)
+                    if not emails.empty:
+                        callback(folder, emails, recache=True)
                     continue
+
+                # Get current UIDs
+                self.mail.select_folder(folder)
+                current_uids = set(self.mail.search(['ALL']))
+                
+                # Check for changes
+                if folder not in folder_uids:
+                    folder_uids[folder] = current_uids
+                    continue
+                    
+                new_uids = current_uids - folder_uids[folder]
+                removed_uids = folder_uids[folder] - current_uids
+                
+                if new_uids or removed_uids:
+                    folder_uids[folder] = current_uids
+                    if new_uids:
+                        emails = self.get_mail(filter='all', folders=[folder], uids=list(new_uids), return_dataframe=True)
+                        if not emails.empty:
+                            callback(folder, emails)
             
-            # Wait for next check
-            self.stop_event.wait(check_interval)
+            except Exception as e:
+                print(f"Error polling folder {folder}: {e}")
 
     def get_mail(self, filter='unseen', folders=["INBOX"], uids=None, return_dataframe=True):
         emails = []
