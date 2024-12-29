@@ -163,14 +163,28 @@ class VectorDatabase():
             ''', (uuid, mail['uid'], mail['folder'], mail['from'], mail['to'], mail['subject'], mail['date'], mail['message_id'], mail['raw_body']))
             self.conn.commit()
 
-            # Store embeddings in ChromaDB
-            ids = [f"{uuid}_{i}" for i in range(len(embeddings))]
-            metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(embeddings))]
-            self.emails_collection.add(
-                ids=ids,
-                embeddings=embeddings,
-                metadatas=metadatas
-            )
+            try:
+                # Store embeddings in ChromaDB, checking for duplicates
+                ids = [f"{uuid}_{i}" for i in range(len(embeddings))]
+                metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(embeddings))]
+                
+                # Get existing IDs
+                existing_ids = set(self.emails_collection.get(
+                    ids=ids,
+                    include=[]
+                )['ids'])
+                
+                # Filter out existing IDs
+                new_data = [(i, id) for i, id in enumerate(ids) if id not in existing_ids]
+                if new_data:
+                    new_indices, new_ids = zip(*new_data)
+                    self.emails_collection.add(
+                        ids=new_ids,
+                        embeddings=[embeddings[i] for i in new_indices],
+                        metadatas=[metadatas[i] for i in new_indices]
+                    )
+            except Exception as e:
+                print(f"Error storing embeddings for email {uuid}: {e}")
 
     def get_all_emails(self):
         """Retrieve all emails from the SQLite database."""

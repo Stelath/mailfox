@@ -20,7 +20,8 @@ class EmailHandler:
         self.ssl = ssl
         self.mail = IMAPClient(self.server, use_uid=True, ssl=self.ssl)
         self.mail.login(self.username, self.password)
-        self.idle_event = Event()
+        self.stop_event = Event()
+        self._uid_validity_cache = {}
 
     def format_folders(self, folders):
         # No special formatting needed with IMAPClient
@@ -35,52 +36,101 @@ class EmailHandler:
         subfolders = [folder for folder in all_folders if any(f in folder for f in folders)]
         return subfolders
 
-    def idle_check_new_mail(self, folders, callback):
-        def idle_worker(folder):
-            while not self.idle_event.is_set():
-                try:
-                    self.mail.select_folder(folder)
-                    self.mail.idle()
-                    print(f"Started IDLE mode for folder: {folder}")
-                    responses = self.mail.idle_check(timeout=300)
-                    for response in responses:
-                        if response[1] == b'EXISTS':
-                            print(f"New email in folder: {folder}")
-                            callback(folder)
-                except Exception as e:
-                    print(f"Error in IDLE for folder {folder}: {e}")
-                    time.sleep(5)
-                finally:
-                    self.mail.idle_done()
-
-        threads = []
-        for folder in folders:
-            thread = Thread(target=idle_worker, args=(folder,))
-            thread.daemon = True
-            thread.start()
-            threads.append(thread)
-
+    def _check_uid_validity(self, folder):
+        """Check if folder's UID validity has changed."""
         try:
-            while not self.idle_event.is_set():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.idle_event.set()
-            for thread in threads:
-                thread.join()
+            self.mail.select_folder(folder)
+            current_validity = self.mail.folder_status(folder)[b'UIDVALIDITY']
+            cached_validity = self._uid_validity_cache.get(folder)
+            
+            if cached_validity is None:
+                self._uid_validity_cache[folder] = current_validity
+                return True
+            
+            if current_validity != cached_validity:
+                print(f"UID validity changed for folder {folder}")
+                self._uid_validity_cache[folder] = current_validity
+                return False
+                
+            return True
+        except Exception as e:
+            print(f"Error checking UID validity for {folder}: {e}")
+            return True
 
-    def get_mail(self, filter='unseen', folders=["INBOX"], return_dataframe=True):
+    def _recache_folder(self, folder, limit=None):
+        """Recache emails in a folder after UID validity change."""
+        try:
+            self.mail.select_folder(folder)
+            if limit:
+                # Get most recent emails up to limit
+                messages = self.mail.search(['ALL'])[-limit:]
+            else:
+                # Get all emails
+                messages = self.mail.search(['ALL'])
+            
+            return self.get_mail(filter='all', folders=[folder], uids=messages, return_dataframe=True)
+        except Exception as e:
+            print(f"Error recaching folder {folder}: {e}")
+            return pd.DataFrame()
+
+    def poll_folders(self, folders, callback, check_interval=300, enable_uid_validity=True, recache_limit=100):
+        """Poll folders for changes at specified interval."""
+        folder_uids = {folder: set() for folder in folders}
+        
+        while not self.stop_event.is_set():
+            for folder in folders:
+                try:
+                    # Check UID validity if enabled
+                    if enable_uid_validity and not self._check_uid_validity(folder):
+                        print(f"Recaching folder {folder}")
+                        emails = self._recache_folder(folder, recache_limit)
+                        if not emails.empty:
+                            callback(folder, emails, recache=True)
+                        continue
+
+                    # Get current UIDs
+                    self.mail.select_folder(folder)
+                    current_uids = set(self.mail.search(['ALL']))
+                    
+                    # Check for changes
+                    if folder not in folder_uids:
+                        folder_uids[folder] = current_uids
+                        continue
+                        
+                    new_uids = current_uids - folder_uids[folder]
+                    removed_uids = folder_uids[folder] - current_uids
+                    
+                    if new_uids or removed_uids:
+                        folder_uids[folder] = current_uids
+                        if new_uids:
+                            emails = self.get_mail(filter='all', folders=[folder], uids=list(new_uids), return_dataframe=True)
+                            if not emails.empty:
+                                callback(folder, emails)
+                
+                except Exception as e:
+                    print(f"Error polling folder {folder}: {e}")
+                    time.sleep(5)
+                    continue
+            
+            # Wait for next check
+            self.stop_event.wait(check_interval)
+
+    def get_mail(self, filter='unseen', folders=["INBOX"], uids=None, return_dataframe=True):
         emails = []
         for folder in tqdm(folders, desc="Processing Folders", position=0, leave=False):
             self.mail.select_folder(folder)
-            if filter == 'unseen':
-                messages = self.mail.search(['UNSEEN'])
-            elif filter == 'seen':
-                messages = self.mail.search(['SEEN']) 
-            elif filter == 'all':
-                messages = self.mail.search('ALL')
+            if uids is not None:
+                messages = uids
             else:
-                print("Invalid filter. Please use 'unseen', 'all', or 'seen'.")
-                return
+                if filter == 'unseen':
+                    messages = self.mail.search(['UNSEEN'])
+                elif filter == 'seen':
+                    messages = self.mail.search(['SEEN']) 
+                elif filter == 'all':
+                    messages = self.mail.search('ALL')
+                else:
+                    print("Invalid filter. Please use 'unseen', 'all', or 'seen'.")
+                    return
 
             for uid in tqdm(messages, desc=f"Getting Emails from {folder}", position=1, leave=False):
                 # Use correct PEEK format for IMAPClient
@@ -176,4 +226,4 @@ class EmailHandler:
 
     def delete_mail(self, uids):
         self.mail.delete_messages(uids)
-        self.mail.expunge()
+        # self.mail.expunge()
