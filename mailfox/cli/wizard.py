@@ -3,8 +3,9 @@ import click
 from typing import Optional, List
 from ..core.auth import save_credentials
 from ..core.config_manager import save_config
+from ..core.database_manager import get_vector_db, initialize_database
 from ..email_interface import EmailHandler
-from ..vector import VectorDatabase, EmbeddingFunctions
+from ..vector import EmbeddingFunctions
 import os
 
 def run_setup_wizard() -> None:
@@ -98,24 +99,12 @@ def _handle_initial_download(
         
     try:
         email_handler = EmailHandler(username, password)
-        vector_db = VectorDatabase(
-            os.path.expanduser(config["email_db_path"]),
-            embedding_function=config["default_embedding_function"],
-            openai_api_key=api_key
-        )
+        vector_db = get_vector_db(api_key)
         
         folders = config["flagged_folders"]
         typer.echo(f"Downloading emails from folders: {', '.join(folders)}")
         
-        for folder in folders:
-            emails = email_handler.get_mail(
-                filter="all",
-                folders=[folder],
-                return_dataframe=True
-            )
-            if not emails.empty:
-                typer.echo(f"Storing {len(emails)} emails from {folder}")
-                vector_db.store_emails(emails.to_dict(orient="records"))
+        initialize_database(email_handler, vector_db, folders)
                 
     except Exception as e:
         typer.secho(

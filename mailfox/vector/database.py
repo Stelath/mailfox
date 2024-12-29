@@ -136,6 +136,13 @@ class VectorDatabase():
                 raw_body TEXT
             )
         ''')
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS seen_uids (
+                uid INTEGER,
+                folder TEXT,
+                PRIMARY KEY (uid, folder)
+            )
+        ''')
         self.conn.commit()
 
     def is_emails_empty(self):
@@ -148,47 +155,54 @@ class VectorDatabase():
     def store_emails(self, emails: list[dict]):
         for idx, mail in enumerate(tqdm(emails, desc="Saving Emails to Database")):
             try:
+                uuid = mail['uuid']
                 paragraphs = mail.get('paragraphs', [])
                 if not paragraphs:
                     continue
-                
-                # Get embeddings for chunked paragraphs
-                embeddings = self.embed_paragraphs(paragraphs)
-            except Exception as e:
-                print(f"Error embedding email {idx}: {e}")
-                continue
 
-            uuid = mail['uuid']
-
-            # Store email metadata in SQLite database
-            self.cursor.execute('''
-                INSERT OR REPLACE INTO emails (uuid, uid, folder, sender, recipient, subject, date, message_id, raw_body)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (uuid, mail['uid'], mail['folder'], mail['from'], mail['to'], mail['subject'], mail['date'], mail['message_id'], mail['raw_body']))
-            self.conn.commit()
-
-            try:
-                # Store embeddings in ChromaDB, checking for duplicates
-                ids = [f"{uuid}_{i}" for i in range(len(embeddings))]
-                metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(embeddings))]
-                
-                # Get existing IDs
-                existing_ids = set(self.emails_collection.get(
-                    ids=ids,
+                # Check if email exists in ChromaDB first
+                test_ids = [f"{uuid}_0"]  # Check first paragraph ID
+                existing = self.emails_collection.get(
+                    ids=test_ids,
                     include=[]
-                )['ids'])
-                
-                # Filter out existing IDs
-                new_data = [(i, id) for i, id in enumerate(ids) if id not in existing_ids]
-                if new_data:
-                    new_indices, new_ids = zip(*new_data)
-                    # Convert tuple to list for ChromaDB
-                    new_ids_list = list(new_ids)
-                    self.emails_collection.add(
-                        ids=new_ids_list,
-                        embeddings=[embeddings[i] for i in new_indices],
-                        metadatas=[metadatas[i] for i in new_indices]
-                    )
+                )
+                email_exists = len(existing['ids']) > 0
+
+                # Store email metadata in SQLite database
+                self.cursor.execute('''
+                    INSERT OR REPLACE INTO emails (uuid, uid, folder, sender, recipient, subject, date, message_id, raw_body)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (uuid, mail['uid'], mail['folder'], mail['from'], mail['to'], mail['subject'], mail['date'], mail['message_id'], mail['raw_body']))
+                self.conn.commit()
+
+                if email_exists:
+                    # Only update metadata if email exists
+                    ids = [f"{uuid}_{i}" for i in range(len(paragraphs))]
+                    metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(paragraphs))]
+                    existing_ids = set(self.emails_collection.get(
+                        ids=ids,
+                        include=[]
+                    )['ids'])
+                    for i, vec_id in enumerate(ids):
+                        if vec_id in existing_ids:
+                            self.emails_collection.update(
+                                ids=[vec_id],
+                                metadatas=[metadatas[i]]
+                            )
+                else:
+                    # Only calculate embeddings for new emails
+                    try:
+                        embeddings = self.embed_paragraphs(paragraphs)
+                        if embeddings:
+                            ids = [f"{uuid}_{i}" for i in range(len(embeddings))]
+                            metadatas = [{'uuid': uuid, 'folder': mail['folder'], 'paragraph_index': i} for i in range(len(embeddings))]
+                            self.emails_collection.add(
+                                ids=ids,
+                                embeddings=embeddings,
+                                metadatas=metadatas
+                            )
+                    except Exception as e:
+                        print(f"Error embedding new email {uuid}: {e}")
             except Exception as e:
                 print(f"Error storing embeddings for email {uuid}: {e}")
 
@@ -242,6 +256,48 @@ class VectorDatabase():
     def update_email_folder(self, uuid, new_folder):
         self.cursor.execute('UPDATE emails SET folder=? WHERE uuid=?', (new_folder, uuid))
         self.conn.commit()
+
+    def add_seen_uids(self, uids, folder):
+        """Store UIDs that have been seen in a folder."""
+        try:
+            self.cursor.executemany(
+                'INSERT OR IGNORE INTO seen_uids (uid, folder) VALUES (?, ?)',
+                [(int(uid), folder) for uid in uids]
+            )
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error storing seen UIDs: {e}")
+
+    def check_seen_uids(self, uids, folder):
+        """Check which UIDs have been seen before in a folder."""
+        try:
+            seen_uids = set()
+            for uid in uids:
+                self.cursor.execute(
+                    'SELECT uid FROM seen_uids WHERE uid = ? AND folder = ?',
+                    (int(uid), folder)
+                )
+                if self.cursor.fetchone():
+                    seen_uids.add(int(uid))
+            return seen_uids
+        except Exception as e:
+            print(f"Error checking seen UIDs: {e}")
+            return set()
+
+    def get_seen_uids(self):
+        """Get all seen UIDs and their folders."""
+        try:
+            self.cursor.execute('SELECT uid, folder FROM seen_uids')
+            rows = self.cursor.fetchall()
+            folder_uids = {}
+            for uid, folder in rows:
+                if folder not in folder_uids:
+                    folder_uids[folder] = set()
+                folder_uids[folder].add(int(uid))
+            return folder_uids
+        except Exception as e:
+            print(f"Error getting seen UIDs: {e}")
+            return {}
 
     def close(self):
         self.conn.close()
