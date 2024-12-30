@@ -1,6 +1,6 @@
 from collections import Counter
 import typer
-from ..vector import KMeansCluster
+from ..vector.classifiers.linear_svm import LinearSVMClassifier
 from ..core.config_manager import read_config
 import os
 import numpy as np
@@ -16,7 +16,7 @@ def initialize_clustering(vector_db, n_clusters=10):
     folders = [metadata['folder'] for metadata in docs['metadatas']]
     
     # Create and fit new clustering model
-    clustering = KMeansCluster(pca_components=None)
+    clustering = LinearSVMClassifier()
     clustering.fit(all_embeddings, folders=folders)
     
     # Save the model
@@ -27,7 +27,7 @@ def get_clustering_model():
     """Load the existing clustering model."""
     config = read_config()
     clustering_path = os.path.expanduser(config['clustering_path'])
-    clustering = KMeansCluster()
+    clustering = LinearSVMClassifier()
     clustering.load_model(clustering_path)
     return clustering
 
@@ -50,18 +50,18 @@ def classify_emails(new_emails, vector_db, email_handler):
     
     for idx, mail in new_emails.iterrows():
         try:
-            paragraphs = mail['paragraphs']
-            email_embeddings = vector_db.embed_paragraphs(paragraphs)
-            predicted_classes = clustering.find_closest_class(np.array(email_embeddings), clustering.kmeans.labels_)
+            # Look up embeddings for this email's uuid in vector db
+            email_ids = [f"{mail['uuid']}_{i}" for i in range(len(mail['paragraphs']))]
+            email_docs = vector_db.emails_collection.get(
+                ids=email_ids,
+                include=['embeddings']
+            )
+            embeddings = email_docs['embeddings']
             
-            if isinstance(predicted_classes[0], list):
-                class_counts = Counter([cls for classes in predicted_classes for cls in classes])
-            else:
-                class_counts = Counter(predicted_classes)
+            # Use the LRClassifier to predict the folder directly
+            predicted_folder = clustering.classify_email(embeddings)
             
-            predicted_folder = class_counts.most_common(1)[0][0]
-            
-            if predicted_folder:
+            if predicted_folder and predicted_folder != "UNKNOWN":
                 email_handler.move_mail([mail['uid']], predicted_folder)
                 print(f"Moved email {mail['uuid']} to folder: {predicted_folder}")
             else:

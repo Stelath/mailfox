@@ -39,28 +39,6 @@ def process_folder_update(
             fg=typer.colors.RED
         )
 
-def check_inbox(
-    email_handler: EmailHandler,
-    vector_db: VectorDatabase
-) -> None:
-    """Check INBOX for new emails and classify them."""
-    try:
-        emails = email_handler.get_mail(
-            filter='unseen',
-            folders=["INBOX"],
-            return_dataframe=True
-        )
-        if not emails.empty:
-            typer.echo(f"Found {len(emails)} new emails in INBOX")
-            vector_db.store_emails(emails.to_dict(orient="records"))
-            process_new_mail("INBOX", email_handler, vector_db)
-    except Exception as e:
-        typer.secho(
-            f"Error checking INBOX: {str(e)}",
-            err=True,
-            fg=typer.colors.RED
-        )
-
 def run_application() -> None:
     """Run the main MailFox application."""
     email_handler = None
@@ -102,7 +80,7 @@ def run_application() -> None:
         try:
             while not email_handler.stop_event.is_set():
                 # First check inbox
-                check_inbox(email_handler, vector_db)
+                process_new_mail("INBOX", email_handler, vector_db)
                 
                 # Then poll folders
                 email_handler.poll_folders(
