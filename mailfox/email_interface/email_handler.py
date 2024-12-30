@@ -57,65 +57,53 @@ class EmailHandler:
             print(f"Error checking UID validity for {folder}: {e}")
             return True
 
-    def _recache_folder(self, folder, limit=None):
+    def _recache_folder(self, folder):
         """Recache emails in a folder after UID validity change."""
         try:
             self.mail.select_folder(folder)
-            if limit:
-                # Get most recent emails up to limit
-                messages = self.mail.search(['ALL'])[-limit:]
-            else:
-                # Get all emails
-                messages = self.mail.search(['ALL'])
-            
+            messages = self.mail.search(['ALL'])
             return self.get_mail(filter='all', folders=[folder], uids=messages, return_dataframe=True)
         except Exception as e:
             print(f"Error recaching folder {folder}: {e}")
             return pd.DataFrame()
 
-    def poll_folders(self, folders, callback, check_interval=300, enable_uid_validity=True, recache_limit=100):
-        """Poll folders for changes at specified interval."""
-        folder_uids = {folder: set() for folder in folders}
-        
-        while not self.stop_event.is_set():
-            for folder in folders:
-                try:
-                    # Check UID validity if enabled
-                    if enable_uid_validity and not self._check_uid_validity(folder):
-                        print(f"Recaching folder {folder}")
-                        emails = self._recache_folder(folder, recache_limit)
-                        if not emails.empty:
-                            callback(folder, emails, recache=True)
-                        continue
-
-                    # Get current UIDs
-                    self.mail.select_folder(folder)
-                    current_uids = set(self.mail.search(['ALL']))
-                    
-                    # Check for changes
-                    if folder not in folder_uids:
-                        folder_uids[folder] = current_uids
-                        continue
-                        
-                    new_uids = current_uids - folder_uids[folder]
-                    removed_uids = folder_uids[folder] - current_uids
-                    
-                    if new_uids or removed_uids:
-                        folder_uids[folder] = current_uids
-                        if new_uids:
-                            emails = self.get_mail(filter='all', folders=[folder], uids=list(new_uids), return_dataframe=True)
-                            if not emails.empty:
-                                callback(folder, emails)
-                
-                except Exception as e:
-                    print(f"Error polling folder {folder}: {e}")
-                    time.sleep(5)
+    def poll_folders(self, folders, folder_uids, callback, enable_uid_validity=True):
+        """Poll folders for changes."""
+        for folder in folders:
+            try:
+                # Check UID validity if enabled
+                if enable_uid_validity and not self._check_uid_validity(folder):
+                    print(f"Recaching folder {folder}")
+                    emails = self._recache_folder(folder)
+                    if not emails.empty:
+                        callback(folder, emails, recache=True)
                     continue
-            
-            # Wait for next check
-            self.stop_event.wait(check_interval)
 
-    def get_mail(self, filter='unseen', folders=["INBOX"], uids=None, return_dataframe=True):
+                # Get current UIDs
+                self.mail.select_folder(folder)
+                current_uids = set(self.mail.search(['SEEN']))
+                
+                # Check for changes
+                if folder not in folder_uids:
+                    folder_uids[folder] = current_uids
+                    # Return all UIDs for new folders
+                    callback(folder, pd.DataFrame(), current_uids=current_uids)
+                    continue
+                    
+                new_uids = current_uids - {int(uid) for uid in folder_uids[folder]}
+                removed_uids = {int(uid) for uid in folder_uids[folder]} - current_uids
+                
+                # POTENTIAL SECURITY RISK, NEEDS TO SYNC REMOVED IDS AND REMOVE THEM FROM LOCAL STORAGE
+                if new_uids or removed_uids:
+                    if new_uids:
+                        emails = self.get_mail(filter=None, folders=[folder], uids=list(new_uids), return_dataframe=True)
+                        # Return checked UIDs along with emails
+                        callback(folder, emails, fetched_uids=new_uids)
+            
+            except Exception as e:
+                print(f"Error polling folder {folder}: {e}")
+
+    def get_mail(self, filter='unseen', folders=["INBOX"], uids=None, return_dataframe=True, return_uids=False):
         emails = []
         for folder in tqdm(folders, desc="Processing Folders", position=0, leave=False):
             self.mail.select_folder(folder)
@@ -133,7 +121,7 @@ class EmailHandler:
                     return
 
             for uid in tqdm(messages, desc=f"Getting Emails from {folder}", position=1, leave=False):
-                # Use correct PEEK format for IMAPClient
+                # Use correct PEEK format for IMAPClient 
                 raw_email = self.mail.fetch(uid, ['BODY.PEEK[]', 'FLAGS'])
                 email_message = email.message_from_bytes(raw_email[uid][b'BODY[]'])
                 flags = raw_email[uid][b'FLAGS']
@@ -141,7 +129,22 @@ class EmailHandler:
                 if mail:
                     emails.append(mail)
 
-        return pd.DataFrame(emails) if return_dataframe else emails
+        if return_uids:
+            all_uids = {}
+            for folder in folders:
+                self.mail.select_folder(folder)
+                if uids is not None:
+                    all_uids[folder] = set(uids)
+                else:
+                    if filter == 'unseen':
+                        all_uids[folder] = set(self.mail.search(['UNSEEN']))
+                    elif filter == 'seen':
+                        all_uids[folder] = set(self.mail.search(['SEEN']))
+                    elif filter == 'all':
+                        all_uids[folder] = set(self.mail.search('ALL'))
+            return (pd.DataFrame(emails) if return_dataframe else emails, all_uids)
+        else:
+            return pd.DataFrame(emails) if return_dataframe else emails
 
     def _process_email(self, uid, folder, email_message, flags):
         try:
@@ -151,25 +154,32 @@ class EmailHandler:
                 local_message_date = local_date.strftime("%a, %d %b %Y %H:%M:%S")
 
             email_from = str(decode_header(email_message['From'])[0][0])
-            email_to = str(decode_header(email_message['To'])[0][0])
+            email_to = str(decode_header(email_message['To'])[0][0]) 
             subject = str(decode_header(email_message['Subject'])[0][0])
-            uuid = self.hash_email({'from': email_from, 'to': email_to, 'subject': subject, 'date': local_message_date})
+            
+            body = self._extract_body(email_message)
+            if not body:
+                return None
+
+            raw_body = body
+            processed_body = self._process_body(body)
+            paragraphs = self._split_into_paragraphs(processed_body)
+
+            if not paragraphs:
+                return None
+
+            uuid = self.hash_email({
+                'from': email_from, 
+                'to': email_to, 
+                'subject': subject,
+                'date': local_message_date,
+                'body': body
+            })
             message_id = email_message['Message-ID']
         except Exception as e:
             print(f"Error processing email: {e}")
             return None
-
-        body = self._extract_body(email_message)
-        if not body:
-            return None
-
-        raw_body = body
-        processed_body = self._process_body(body)
-        paragraphs = self._split_into_paragraphs(processed_body)
-
-        if not paragraphs:
-            return None
-
+        
         return {
             'uid': uid,
             'folder': folder,
@@ -203,7 +213,7 @@ class EmailHandler:
         return body
 
     def hash_email(self, email_dict):
-        hash_string = email_dict['from'] + email_dict['to'] + email_dict['subject'] + email_dict['date']
+        hash_string = email_dict['from'] + email_dict['to'] + email_dict['subject'] + email_dict['date'] + email_dict['body']
         uuid = hashlib.sha256(hash_string.encode()).hexdigest()
         return uuid
 
@@ -226,4 +236,4 @@ class EmailHandler:
 
     def delete_mail(self, uids):
         self.mail.delete_messages(uids)
-        # self.mail.expunge()
+        self.mail.expunge()

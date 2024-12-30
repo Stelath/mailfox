@@ -2,7 +2,8 @@ import typer
 from pathlib import Path
 import shutil
 from ..core.config_manager import read_config
-from ..vector import VectorDatabase
+from ..core.auth import read_credentials
+from ..vector import VectorDatabase, EmbeddingFunctions
 
 database_app = typer.Typer(help="Manage email database")
 
@@ -28,13 +29,28 @@ def create_database(
             )
             return
 
-        # Create parent directory if it doesn't exist
+                # Create parent directory if it doesn't exist
         db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        openai_api_key = None
+        if config["default_embedding_function"] == EmbeddingFunctions.OPENAI:
+            # Try to get API key from credentials
+            try:
+                _, _, api_key = read_credentials()
+                openai_api_key = api_key
+            except Exception as e:
+                print(f"Error reading credentials: {e}")
+                raise typer.Exit(1)
+
+            if not openai_api_key:
+                typer.echo("OpenAI API key is required for OpenAI embeddings. Set it using 'mailfox credentials set'")
+                raise typer.Exit(1)
 
         # Initialize empty database
         vector_db = VectorDatabase(
             db_path=str(db_path),
-            embedding_function=config["default_embedding_function"]
+            embedding_function=config["default_embedding_function"],
+            openai_api_key=openai_api_key
         )
         
         typer.echo(f"✨ Created new email database at {db_path}")
