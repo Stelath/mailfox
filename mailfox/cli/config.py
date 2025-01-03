@@ -48,12 +48,6 @@ def set_config(
         True,
         help="Enable UID validity checking"
     ),
-    recache_limit: int = typer.Option(
-        100,
-        help="Number of emails to recache on UID validity mismatch",
-        min=1,
-        max=1000
-    ),
 ) -> None:
     """Set the configuration for MailFox."""
     try:
@@ -69,7 +63,6 @@ def set_config(
             "default_embedding_function": default_embedding_function.value,
             "check_interval": check_interval,
             "enable_uid_validity": enable_uid_validity,
-            "recache_limit": recache_limit,
         }
         
         save_config(config)
@@ -139,12 +132,6 @@ def validate_config() -> None:
         if not (60 <= config["check_interval"] <= 3600):
             typer.secho(
                 f"Warning: Check interval {config['check_interval']} is outside recommended range (60-3600)",
-                fg=typer.colors.YELLOW
-            )
-            
-        if not (1 <= config["recache_limit"] <= 1000):
-            typer.secho(
-                f"Warning: Recache limit {config['recache_limit']} is outside recommended range (1-1000)",
                 fg=typer.colors.YELLOW
             )
             

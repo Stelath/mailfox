@@ -66,11 +66,6 @@ def _configure_paths_and_settings() -> dict:
         "Enable UID validity checking?",
         default=True
     )
-    recache_limit = typer.prompt(
-        "Enter recache limit",
-        default=100,
-        type=int
-    )
     
     return {
         "email_db_path": email_db_path,
