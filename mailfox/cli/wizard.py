@@ -45,9 +45,9 @@ def _configure_paths_and_settings() -> dict:
         default="INBOX"
     )
     # Use Click's Choice for validated input
-    classifier_choices = ["svm", "logistic", "clustering", "llm"]
+    classifier_choices = ["svm", "logistic"]
     default_classifier = typer.prompt(
-        "Enter the default classifier",
+        "Enter the default classifier (svm or logistic)",
         default="svm",
         type=click.Choice(classifier_choices)
     )
