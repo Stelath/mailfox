@@ -84,8 +84,7 @@ def _configure_paths_and_settings() -> dict:
         "classifier_model_path": classifier_model_path,
         "default_embedding_function": default_embedding_function,
         "check_interval": check_interval,
-        "enable_uid_validity": enable_uid_validity,
-        "recache_limit": recache_limit,
+        "enable_uid_validity": enable_uid_validity
     }
 
 def _handle_initial_download(
