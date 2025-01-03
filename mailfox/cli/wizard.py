@@ -45,15 +45,15 @@ def _configure_paths_and_settings() -> dict:
         default="INBOX"
     )
     # Use Click's Choice for validated input
-    classifier_choices = ["svm", "logistic"]
+    classifier_choices = ["svm", "logistic", "mlp"]
     default_classifier = typer.prompt(
-        "Enter the default classifier (svm or logistic)",
+        "Enter the default classifier (svm, logistic, or mlp)",
         default="svm",
         type=click.Choice(classifier_choices)
     )
     
     classifier_model_path = None
-    if default_classifier in ["svm", "logistic"]:
+    if default_classifier in ["svm", "logistic", "mlp"]:
         classifier_model_path = typer.prompt(
             "Enter the path for classifier model (optional)",
             default=f"~/.mailfox/data/{default_classifier}_model.pkl"

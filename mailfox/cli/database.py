@@ -6,13 +6,15 @@ from ..core.auth import read_credentials
 from ..vector import VectorDatabase, EmbeddingFunctions
 from ..vector.classifiers.linear_svm import LinearSVMClassifier
 from ..vector.classifiers.logistic_regression import LogisticRegressionClassifier
+from ..vector.classifiers.mlp import MLPNeuralClassifier
 import numpy as np
 
 database_app = typer.Typer(help="Manage email database")
 
 CLASSIFIERS = {
     "svm": LinearSVMClassifier,
-    "logistic": LogisticRegressionClassifier
+    "logistic": LogisticRegressionClassifier,
+    "mlp": MLPNeuralClassifier
 }
 
 @database_app.command("create")
@@ -76,7 +78,7 @@ def retrain_classifier(
         "svm",
         "--classifier",
         "-c",
-        help="Classifier to train (svm or logistic)"
+        help="Classifier to train (svm, logistic, or mlp)"
     ),
     model_path: Path = typer.Option(
         None,

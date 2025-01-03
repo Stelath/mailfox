@@ -7,13 +7,15 @@ from ..core.auth import read_credentials
 from ..vector import VectorDatabase, EmbeddingFunctions
 from ..vector.classifiers.linear_svm import LinearSVMClassifier
 from ..vector.classifiers.logistic_regression import LogisticRegressionClassifier
+from ..vector.classifiers.mlp import MLPNeuralClassifier
 import numpy as np
 
 classifier_app = typer.Typer(help="Manage email classifiers")
 
 CLASSIFIERS = {
     "svm": LinearSVMClassifier,
-    "logistic": LogisticRegressionClassifier
+    "logistic": LogisticRegressionClassifier,
+    "mlp": MLPNeuralClassifier
 }
 
 def format_metrics(metrics: dict) -> str:

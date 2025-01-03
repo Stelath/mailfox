@@ -40,7 +40,7 @@ def set_config(
     ),
     default_classifier: Optional[str] = typer.Option(
         None,
-        help="Default classifier (svm, logistic, clustering, or llm)"
+        help="Default classifier (svm, logistic, or mlp)"
     ),
     classifier_model_path: Optional[Path] = typer.Option(
         None,
@@ -165,7 +165,7 @@ def reset_config() -> None:
         )
 
 # Valid classifier types
-VALID_CLASSIFIERS = ["svm", "logistic"]
+VALID_CLASSIFIERS = ["svm", "logistic", "mlp"]
 
 @config_app.command("validate")
 def validate_config() -> None:
