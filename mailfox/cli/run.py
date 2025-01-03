@@ -2,7 +2,7 @@ import typer
 import os
 from typing import Callable, Optional, Set
 import pandas as pd
-from ..core.email_processor import process_new_mail, initialize_clustering
+from ..core.email_processor import process_new_mail, initialize_classifier
 from ..core.auth import read_credentials
 from ..core.config_manager import read_config
 from ..core.database_manager import get_vector_db, initialize_database
@@ -52,14 +52,19 @@ def run_application() -> None:
         if vector_db is None:
             return
             
-        # Initialize clustering if needed
-        config_path = os.path.expanduser(config['clustering_path'])
-        if not os.path.exists(config_path):
-            typer.echo("Initializing new clustering model...")
-            initialize_clustering(vector_db)
-            typer.echo("Clustering model initialized and saved.")
+        # Initialize classifier if needed
+        model_path = config.get('classifier_model_path')
+        if not model_path:
+            model_path = os.path.expanduser(config['clustering_path'])
         else:
-            typer.echo("Using existing clustering model.")
+            model_path = os.path.expanduser(model_path)
+            
+        if not os.path.exists(model_path):
+            typer.echo(f"Initializing new {config['default_classifier']} classifier...")
+            initialize_classifier(vector_db)
+            typer.echo("Classifier initialized and saved.")
+        else:
+            typer.echo(f"Using existing {config['default_classifier']} classifier.")
             
         # Get all folders including subfolders
         classification_folders = config['flagged_folders']

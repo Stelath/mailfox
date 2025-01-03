@@ -3,6 +3,7 @@ from typing import Optional
 from .credentials import credentials_app
 from .config import config_app
 from .database import database_app
+from .classifier import classifier_app
 from .wizard import run_setup_wizard
 from .run import run_application
 
@@ -26,6 +27,12 @@ app.add_typer(
     database_app,
     name="database",
     help="Manage email database"
+)
+
+app.add_typer(
+    classifier_app,
+    name="classifier",
+    help="Manage email classifiers"
 )
 
 @app.command()
