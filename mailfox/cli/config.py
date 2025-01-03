@@ -164,11 +164,16 @@ def reset_config() -> None:
             fg=typer.colors.RED
         )
 
+# Valid classifier types
+VALID_CLASSIFIERS = ["svm", "logistic"]
+
 @config_app.command("validate")
 def validate_config() -> None:
     """Validate the current configuration."""
     try:
         config = read_config()
+        has_warnings = False
+        has_errors = False
         
         # Validate paths
         email_db_path = Path(config["email_db_path"]).expanduser()
@@ -176,12 +181,14 @@ def validate_config() -> None:
         
         # Check parent directories exist
         if not email_db_path.parent.exists():
+            has_warnings = True
             typer.secho(
                 f"Warning: Directory for email database does not exist: {email_db_path.parent}",
                 fg=typer.colors.YELLOW
             )
             
         if not clustering_path.parent.exists():
+            has_warnings = True
             typer.secho(
                 f"Warning: Directory for clustering data does not exist: {clustering_path.parent}",
                 fg=typer.colors.YELLOW
@@ -189,20 +196,34 @@ def validate_config() -> None:
             
         # Validate embedding function
         if config["default_embedding_function"] not in [e.value for e in EmbeddingFunctions]:
+            has_errors = True
             typer.secho(
                 f"Error: Invalid embedding function: {config['default_embedding_function']}",
                 fg=typer.colors.RED
             )
-            return
+            
+        # Validate classifier type
+        if config["default_classifier"] not in VALID_CLASSIFIERS:
+            has_errors = True
+            typer.secho(
+                f"Error: Invalid classifier type: {config['default_classifier']}. Must be one of: {', '.join(VALID_CLASSIFIERS)}",
+                fg=typer.colors.RED
+            )
             
         # Validate numeric values
         if not (60 <= config["check_interval"] <= 3600):
+            has_warnings = True
             typer.secho(
                 f"Warning: Check interval {config['check_interval']} is outside recommended range (60-3600)",
                 fg=typer.colors.YELLOW
             )
             
-        typer.echo("✅ Configuration validation complete")
+        if has_errors:
+            typer.secho("❌ Configuration validation failed", fg=typer.colors.RED)
+        elif has_warnings:
+            typer.secho("⚠️  Configuration valid but has warnings", fg=typer.colors.YELLOW)
+        else:
+            typer.echo("✅ Configuration validation complete")
         
     except Exception as e:
         typer.secho(

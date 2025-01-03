@@ -127,7 +127,7 @@ def retrain_classifier(
     classifier_type: Optional[str] = typer.Option(
         None,
         "--type",
-        "-t",
+        "-t", 
         help="Type of classifier to train (svm or logistic)"
     ),
     model_path: Optional[Path] = typer.Option(
@@ -141,7 +141,7 @@ def retrain_classifier(
     try:
         config = read_config()
         
-        # Use config values if not specified
+        # Use config values if not specified 
         if classifier_type is None:
             classifier_type = config.get('default_classifier', 'svm')
             
@@ -161,12 +161,15 @@ def retrain_classifier(
                 model_path = os.path.expanduser(model_path)
 
         # Initialize vector database
+        typer.echo("🔌 Connecting to vector database...")
         db_path = Path(config["email_db_path"]).expanduser()
         openai_api_key = None
         if config["default_embedding_function"] == EmbeddingFunctions.OPENAI:
+            typer.echo("🔑 Loading OpenAI credentials...")
             try:
                 _, _, api_key = read_credentials()
                 openai_api_key = api_key
+                typer.echo("✅ OpenAI credentials loaded successfully")
             except Exception as e:
                 typer.secho(f"Error reading credentials: {e}", err=True, fg=typer.colors.RED)
                 return
@@ -177,44 +180,40 @@ def retrain_classifier(
             openai_api_key=openai_api_key
         )
 
-        # Get all emails and their embeddings
-        emails = vector_db.get_all_emails()
-        if not emails:
-            typer.secho("No emails found in database", err=True, fg=typer.colors.RED)
+        # Get existing embeddings from database
+        typer.echo("📊 Loading embeddings from database...")
+        docs = vector_db.emails_collection.get(include=['embeddings', 'metadatas'])
+        
+        if not docs['embeddings']:
+            typer.secho("❌ No embeddings found in database", err=True, fg=typer.colors.RED)
             return
-
-        # Get embeddings for all emails
-        all_embeddings = []
-        all_folders = []
-        for email in emails:
-            embeddings = vector_db.embed_paragraphs(email['paragraphs'])
-            if embeddings:
-                all_embeddings.extend(embeddings)
-                all_folders.extend([email['folder']] * len(embeddings))
-
-        if not all_embeddings:
-            typer.secho("No embeddings found", err=True, fg=typer.colors.RED)
-            return
-
-        # Convert embeddings to numpy array
-        embeddings_array = np.array(all_embeddings)
+            
+        embeddings_array = np.array(docs['embeddings'])
+        folders = [metadata['folder'] for metadata in docs['metadatas']]
+        
+        typer.echo(f"✨ Loaded {len(embeddings_array)} embeddings from {len(set(folders))} folders")
 
         # Initialize and train classifier
         clf = CLASSIFIERS[classifier_type]()
-        typer.echo(f"Training {classifier_type} classifier...")
-        metrics = clf.fit(embeddings_array, all_folders)
+        with typer.progressbar(
+            length=100,
+            label=f"🧠 Training {classifier_type} classifier"
+        ) as progress:
+            metrics = clf.fit(embeddings_array, folders)
+            progress.update(100)
 
         # Save model with metrics
+        typer.echo("\n💾 Saving trained model...")
         model_path = Path(model_path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
         clf.save_model(model_path, metrics)
 
-        typer.echo(f"\n✨ Successfully trained {classifier_type} classifier and saved to {model_path}")
+        typer.echo(f"\n🎉 Successfully trained {classifier_type} classifier and saved to {model_path}")
         typer.echo(format_metrics(metrics))
 
     except Exception as e:
         typer.secho(
-            f"Error training classifier: {str(e)}",
+            f"❌ Error training classifier: {str(e)}",
             err=True,
             fg=typer.colors.RED
         )
