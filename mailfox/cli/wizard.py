@@ -44,12 +44,21 @@ def _configure_paths_and_settings() -> dict:
         "Enter any flagged folders (comma-separated)",
         default="INBOX"
     )
+    # Use Click's Choice for validated input
+    classifier_choices = ["svm", "logistic", "clustering", "llm"]
     default_classifier = typer.prompt(
         "Enter the default classifier",
-        default="clustering"
+        default="svm",
+        type=click.Choice(classifier_choices)
     )
     
-    # Use Click's Choice for validated input
+    classifier_model_path = None
+    if default_classifier in ["svm", "logistic"]:
+        classifier_model_path = typer.prompt(
+            "Enter the path for classifier model (optional)",
+            default=f"~/.mailfox/data/{default_classifier}_model.pkl"
+        )
+    
     embedding_choices = [func.value for func in EmbeddingFunctions]
     default_embedding_function = typer.prompt(
         "Enter the default embedding function",
@@ -66,17 +75,13 @@ def _configure_paths_and_settings() -> dict:
         "Enable UID validity checking?",
         default=True
     )
-    recache_limit = typer.prompt(
-        "Enter recache limit",
-        default=100,
-        type=int
-    )
     
     return {
         "email_db_path": email_db_path,
         "clustering_path": clustering_path,
         "flagged_folders": [f.strip() for f in flagged_folders.split(",")],
         "default_classifier": default_classifier,
+        "classifier_model_path": classifier_model_path,
         "default_embedding_function": default_embedding_function,
         "check_interval": check_interval,
         "enable_uid_validity": enable_uid_validity,

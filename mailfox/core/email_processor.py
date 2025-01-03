@@ -1,35 +1,62 @@
 from collections import Counter
 import typer
 from ..vector.classifiers.linear_svm import LinearSVMClassifier
+from ..vector.classifiers.logistic_regression import LogisticRegressionClassifier
 from ..core.config_manager import read_config
 import os
 import numpy as np
 
-def initialize_clustering(vector_db, n_clusters=10):
-    """Initialize and save a new clustering model."""
+CLASSIFIERS = {
+    "svm": LinearSVMClassifier,
+    "logistic": LogisticRegressionClassifier
+}
+
+def initialize_classifier(vector_db):
+    """Initialize and save a new classifier model."""
     config = read_config()
-    clustering_path = os.path.expanduser(config['clustering_path'])
+    classifier_type = config.get('default_classifier', 'svm')
+    
+    if classifier_type not in CLASSIFIERS:
+        typer.secho(f"Invalid classifier type: {classifier_type}", err=True, fg=typer.colors.RED)
+        return None
+        
+    model_path = config.get('classifier_model_path')
+    if not model_path:
+        model_path = os.path.expanduser(config['clustering_path'])
+    else:
+        model_path = os.path.expanduser(model_path)
     
     # Get all pre-calculated embeddings and their metadata from the vector database
     docs = vector_db.emails_collection.get(include=['embeddings', 'metadatas'])
     all_embeddings = np.array(docs['embeddings'])
     folders = [metadata['folder'] for metadata in docs['metadatas']]
     
-    # Create and fit new clustering model
-    clustering = LinearSVMClassifier()
-    clustering.fit(all_embeddings, folders=folders)
+    # Create and fit new classifier model
+    classifier = CLASSIFIERS[classifier_type]()
+    classifier.fit(all_embeddings, folders=folders)
     
     # Save the model
-    clustering.save_model(clustering_path)
-    return clustering
+    classifier.save_model(model_path)
+    return classifier
 
-def get_clustering_model():
-    """Load the existing clustering model."""
+def get_classifier():
+    """Load the existing classifier model."""
     config = read_config()
-    clustering_path = os.path.expanduser(config['clustering_path'])
-    clustering = LinearSVMClassifier()
-    clustering.load_model(clustering_path)
-    return clustering
+    classifier_type = config.get('default_classifier', 'svm')
+    
+    if classifier_type not in CLASSIFIERS:
+        typer.secho(f"Invalid classifier type: {classifier_type}", err=True, fg=typer.colors.RED)
+        return None
+        
+    model_path = config.get('classifier_model_path')
+    if not model_path:
+        model_path = os.path.expanduser(config['clustering_path'])
+    else:
+        model_path = os.path.expanduser(model_path)
+        
+    classifier = CLASSIFIERS[classifier_type]()
+    classifier.load_model(model_path)
+    return classifier
 
 def process_new_mail(folder, email_handler, vector_db):
     """Process new emails in a folder."""
@@ -45,8 +72,10 @@ def process_new_mail(folder, email_handler, vector_db):
         typer.secho(f"Error processing new mail in folder {folder}: {e}", err=True, fg=typer.colors.RED)
 
 def classify_emails(new_emails, vector_db, email_handler):
-    # Get clustering model
-    clustering = get_clustering_model()
+    # Get classifier model
+    classifier = get_classifier()
+    if not classifier:
+        return
     
     for idx, mail in new_emails.iterrows():
         try:
@@ -59,7 +88,7 @@ def classify_emails(new_emails, vector_db, email_handler):
             embeddings = email_docs['embeddings']
             
             # Use the LRClassifier to predict the folder directly
-            predicted_folder = clustering.classify_email(embeddings)
+            predicted_folder = classifier.classify_email(embeddings)
             
             if predicted_folder and predicted_folder != "UNKNOWN":
                 email_handler.move_mail([mail['uid']], predicted_folder)

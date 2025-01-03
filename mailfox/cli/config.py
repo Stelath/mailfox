@@ -8,18 +8,26 @@ from ..vector import EmbeddingFunctions
 config_app = typer.Typer(help="Manage MailFox configuration")
 
 
+DEFAULT_CONFIG = {
+    "default_classifier": "svm",
+    "default_embedding_function": EmbeddingFunctions.SENTENCE_TRANSFORMER.value,
+    "check_interval": 300,
+    "enable_uid_validity": True,
+    "classifier_model_path": None
+}
+
 @config_app.command("set")
 def set_config(
-    email_db_path: Path = typer.Option(
-        ...,
+    email_db_path: Optional[Path] = typer.Option(
+        None,
         help="Path to email database",
         exists=False,
         file_okay=False,
         dir_okay=True,
         resolve_path=True
     ),
-    clustering_path: Path = typer.Option(
-        ...,
+    clustering_path: Optional[Path] = typer.Option(
+        None,
         help="Path to clustering data",
         exists=False,
         file_okay=True,
@@ -30,47 +38,73 @@ def set_config(
         None,
         help="Comma-separated list of folders to monitor"
     ),
-    default_classifier: str = typer.Option(
-        "clustering",
-        help="Default classifier (clustering or llm)"
+    default_classifier: Optional[str] = typer.Option(
+        None,
+        help="Default classifier (svm, logistic, clustering, or llm)"
     ),
-    default_embedding_function: EmbeddingFunctions = typer.Option(
-        EmbeddingFunctions.SENTENCE_TRANSFORMER,
+    classifier_model_path: Optional[Path] = typer.Option(
+        None,
+        help="Path to the classifier model file",
+        exists=False,
+        file_okay=True,
+        dir_okay=False,
+        resolve_path=True
+    ),
+    default_embedding_function: Optional[EmbeddingFunctions] = typer.Option(
+        None,
         help="Embedding function to use"
     ),
-    check_interval: int = typer.Option(
-        300,
+    check_interval: Optional[int] = typer.Option(
+        None,
         help="Interval in seconds between email checks",
         min=60,
         max=3600
     ),
-    enable_uid_validity: bool = typer.Option(
-        True,
+    enable_uid_validity: Optional[bool] = typer.Option(
+        None,
         help="Enable UID validity checking"
-    ),
-    recache_limit: int = typer.Option(
-        100,
-        help="Number of emails to recache on UID validity mismatch",
-        min=1,
-        max=1000
     ),
 ) -> None:
     """Set the configuration for MailFox."""
     try:
-        config = {
-            "email_db_path": str(email_db_path),
-            "clustering_path": str(clustering_path),
-            "flagged_folders": (
-                [folder.strip() for folder in flagged_folders.split(",")]
-                if flagged_folders
-                else ["INBOX"]
-            ),
-            "default_classifier": default_classifier,
-            "default_embedding_function": default_embedding_function.value,
-            "check_interval": check_interval,
-            "enable_uid_validity": enable_uid_validity,
-            "recache_limit": recache_limit,
-        }
+        # Read existing config or start with empty dict
+        try:
+            config = read_config()
+        except FileNotFoundError:
+            config = {}
+            
+        # Update only specified values
+        if email_db_path is not None:
+            config["email_db_path"] = str(email_db_path)
+        if clustering_path is not None:
+            config["clustering_path"] = str(clustering_path)
+        if flagged_folders is not None:
+            config["flagged_folders"] = [folder.strip() for folder in flagged_folders.split(",")]
+        if default_classifier is not None:
+            config["default_classifier"] = default_classifier
+        if classifier_model_path is not None:
+            config["classifier_model_path"] = str(classifier_model_path)
+        if default_embedding_function is not None:
+            config["default_embedding_function"] = default_embedding_function.value
+        if check_interval is not None:
+            config["check_interval"] = check_interval
+        if enable_uid_validity is not None:
+            config["enable_uid_validity"] = enable_uid_validity
+            
+        # Ensure required values are present
+        if "email_db_path" not in config:
+            typer.secho("Error: email_db_path is required", err=True, fg=typer.colors.RED)
+            raise typer.Exit(1)
+        if "clustering_path" not in config:
+            typer.secho("Error: clustering_path is required", err=True, fg=typer.colors.RED)
+            raise typer.Exit(1)
+        if "flagged_folders" not in config:
+            config["flagged_folders"] = ["INBOX"]
+            
+        # Set defaults for unspecified values only if they don't exist
+        for key, value in DEFAULT_CONFIG.items():
+            if key not in config:
+                config[key] = value
         
         save_config(config)
         typer.echo("✨ Configuration saved successfully.")
@@ -100,6 +134,32 @@ def show_config() -> None:
     except Exception as e:
         typer.secho(
             f"Error reading configuration: {str(e)}",
+            err=True,
+            fg=typer.colors.RED
+        )
+
+@config_app.command("reset")
+def reset_config() -> None:
+    """Reset configuration to defaults, preserving paths and folders."""
+    try:
+        config = read_config()
+        
+        # Keep only paths and folders
+        preserved = {
+            "email_db_path": config["email_db_path"],
+            "clustering_path": config["clustering_path"],
+            "flagged_folders": config["flagged_folders"]
+        }
+        
+        # Add defaults
+        config = {**preserved, **DEFAULT_CONFIG}
+        
+        save_config(config)
+        typer.echo("✨ Configuration reset successfully.")
+        
+    except Exception as e:
+        typer.secho(
+            f"Error resetting configuration: {str(e)}",
             err=True,
             fg=typer.colors.RED
         )
@@ -139,12 +199,6 @@ def validate_config() -> None:
         if not (60 <= config["check_interval"] <= 3600):
             typer.secho(
                 f"Warning: Check interval {config['check_interval']} is outside recommended range (60-3600)",
-                fg=typer.colors.YELLOW
-            )
-            
-        if not (1 <= config["recache_limit"] <= 1000):
-            typer.secho(
-                f"Warning: Recache limit {config['recache_limit']} is outside recommended range (1-1000)",
                 fg=typer.colors.YELLOW
             )
             
